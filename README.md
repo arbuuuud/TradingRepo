@@ -29,12 +29,21 @@ Trading/
 │       ├── risk-management/SKILL.md
 │       └── trading-strategy/SKILL.md
 ├── include/                   # Modul MQL5 (.mqh)
-│   ├── Defines.mqh            # Enums & struct
-│   ├── RiskManager.mqh        # Kalkulator lot, spread filter, drawdown
-│   ├── SignalEngine.mqh       # Manajemen handle indikator & sinyal
-│   └── TradeExecution.mqh     # Wrapper CTrade standar
+│   ├── Defines.mqh            # Enums & struct dasar
+│   ├── RiskManager.mqh        # Kalkulator lot dasar & spread filter
+│   ├── SignalEngine.mqh       # Manajemen handle indikator dasar
+│   ├── TradeExecution.mqh     # Wrapper CTrade standar
+│   ├── MTFStructure/          # Core MTF Structure Engine
+│   │   ├── MTFDefines.mqh     # Enums SMC Trend & STFStructure struct
+│   │   └── MTFStructureEngine.mqh # Whitelist TF & Event-Driven Candle Close
+│   ├── TradeManager/          # Smart Trade Execution & Protection
+│   │   └── SmartTradeManager.mqh  # Dynamic Lot, BE Lock, EOD 23:55 Force Exit
+│   └── Strategy/              # Pluggable Strategy Engines
+│       ├── BaseEntryEngine.mqh    # Base abstract class untuk strategy
+│       └── M3SMCStrategy.mqh      # 3-tier strategy (H1/M15 Bias -> M3 Base -> M1 Trigger)
 ├── experts/                   # File utama EA (.mq5)
-│   └── StarterEA.mq5          # Boilerplate EA siap pakai
+│   ├── StarterEA.mq5          # Boilerplate EA standar
+│   └── MTFStructureEA.mq5     # Master EA Multi-Timeframe SMC
 └── scripts/
     ├── setup-symlink.sh       # Link project ke Wine MT5
     └── compile.sh             # Kompilasi EA via MetaEditor CLI

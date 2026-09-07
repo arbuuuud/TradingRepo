@@ -11,7 +11,9 @@
 | Folder / File | Deskripsi | Target di Wine MT5 |
 |---|---|---|
 | `experts/` | Berisi file utama EA (`.mq5`) | Symlinked ke `MQL5/Experts/TradingRepo` |
-| `include/` | Reusable modules (`.mqh`) | Symlinked ke `MQL5/Include/TradingRepo` |
+| `include/MTFStructure/` | Core Multi-Timeframe Structure Engine | Symlinked ke `MQL5/Include/TradingRepo` |
+| `include/TradeManager/` | Smart SL/TP, BE, EOD 23:55 Force Exit | Symlinked ke `MQL5/Include/TradingRepo` |
+| `include/Strategy/` | Pluggable Strategy Entry Engines (Base + M3 SMC, etc.) | Symlinked ke `MQL5/Include/TradingRepo` |
 | `scripts/` | Script otomasi symlink & kompilasi Wine | - |
 | `.pi/` | Definisi Subagents & Skills | - |
 
@@ -23,15 +25,17 @@
 
 | Agent | Peran | Cara Pakai |
 |---|---|---|
-| `ea-architect` | Merancang konsep strategi, parameter input, dan model risk management | `/run ea-architect "Rancang strategi Scalping Gold M5 dengan EMA & ATR"` |
-| `dev-mql5` | Menulis/mengedit kode MQL5 modular dan memastikan compile 0 error | `/run dev-mql5 "Implementasikan Trailing Stop ATR pada StarterEA"` |
-| `ea-reviewer` | Mengaudit kode untuk memory leak, slippage, margin protection, dan validasi broker | `/run ea-reviewer "Audit StarterEA.mq5 untuk kesiapan live trading"` |
+| `ea-architect` | Merancang konsep strategi 3-tier MTF, parameter input, dan model risk management | `/run ea-architect "Rancang strategi Scalping M1 dengan HTF Bias H1/M15"` |
+| `dev-mql5` | Menulis/mengedit kode MQL5 modular, optimasi OnCandleClose vs OnTick/OnTimer | `/run dev-mql5 "Implementasikan M15 Breakout Engine ke MTFStructureEA"` |
+| `ea-reviewer` | Mengaudit kode untuk memory leak, CPU load MTF, validasi broker & SL/BE logic | `/run ea-reviewer "Audit MTFStructureEA.mq5 untuk kesiapan live"` |
 
 ### Skills (Technical Reference)
 
 | Skill | Topik | Path |
 |---|---|---|
-| `mql5-core` | MQL5 lifecycle, CTrade library, indicator handle, buffer copy | `.pi/skills/mql5-core/SKILL.md` |
+| `mql5-mtf-structure` | 3-tier MTF hierarchy, Main vs Internal HH/HL, TF whitelist, Candle Close events | `.pi/skills/mql5-mtf-structure/SKILL.md` |
+| `mql5-trade-manager` | OnTick vs OnTimer division, Dynamic Lot (% risk vs entry-SL), BE, EOD 23:55 exit | `.pi/skills/mql5-trade-manager/SKILL.md` |
+| `mql5-core` | MQL5 lifecycle, CTrade library, indicator handle, strict syntax rules | `.pi/skills/mql5-core/SKILL.md` |
 | `risk-management` | Kalkulasi lot dinamis (% risk), drawdown harian, spread filter | `.pi/skills/risk-management/SKILL.md` |
 | `trading-strategy` | Pola signal non-repainting, session filter, multi-timeframe | `.pi/skills/trading-strategy/SKILL.md` |
 
