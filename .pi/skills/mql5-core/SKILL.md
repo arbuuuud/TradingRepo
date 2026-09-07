@@ -98,10 +98,13 @@ bool IsNewBar(string symbol, ENUM_TIMEFRAMES timeframe)
 }
 ```
 
-## 5. Price Normalization & Digits
+## 5. Strict Syntax & Reliability Guidelines
 
-Never pass unnormalized double prices to trade functions:
-```cpp
-int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
-double normPrice = NormalizeDouble(price, digits);
-```
+1. **Semicolon on Struct / Class**: Always end `struct` and `class` definitions with a semicolon `;` after the closing brace (e.g., `struct MyStruct { ... };`).
+2. **Struct Init Helper**: Provide an `Init()` method for structs to reset all member variables to clean defaults (e.g. `0`, `0.0`, `""`, `false`, `_NONE`).
+3. **Strict Typing**: Use explicit type casts when converting between types (e.g. `(int)double_var`, `(double)int_var`).
+4. **Pass Arrays by Reference**: Arrays must always be passed to functions with `&` (e.g. `void Process(double &arr[])`).
+5. **Array Resizing**: Always call `ArrayResize()` before populating dynamic arrays.
+6. **CheckPointer**: Always use `CheckPointer()` before accessing dynamic object pointers.
+7. **Minimize Redundant API Calls**: Cache heavy broker calls (like `SymbolInfoDouble`, `AccountInfoDouble`) per tick rather than repeatedly fetching them in tight inner loops.
+

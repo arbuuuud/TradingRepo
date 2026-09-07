@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
-WINE_PREFIX="$HOME/Library/Application Support/net.metaquotes.wine.metatrader5"
-METAEDITOR_EXE="$WINE_PREFIX/drive_c/Program Files/MetaTrader 5/metaeditor64.exe"
+WINE_PREFIX="$HOME/mt5prefix"
+METAEDITOR_EXE="$WINE_PREFIX/drive_c/Program Files/MetaTrader 5/MetaEditor64.exe"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 TARGET_FILE="$1"

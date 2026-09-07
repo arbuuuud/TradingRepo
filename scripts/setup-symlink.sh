@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
-# Default Wine MT5 path on macOS
-WINE_MT5_BASE="$HOME/Library/Application Support/net.metaquotes.wine.metatrader5/drive_c/Program Files/MetaTrader 5/MQL5"
+# Wine MT5 path on macOS
+WINE_MT5_BASE="$HOME/mt5prefix/drive_c/Program Files/MetaTrader 5/MQL5"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "=== Setting up Symlinks for MetaTrader 5 on Wine ==="

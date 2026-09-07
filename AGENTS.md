@@ -1,7 +1,7 @@
 # TradingRepo — Expert Advisor (MT5) Agent Guide
 
 > **Project:** MetaTrader 5 Expert Advisor Development (MQL5)  
-> **Host Environment:** macOS + Wine 10  
+> **Host Environment:** macOS + Wine (Prefix: `~/mt5prefix`)  
 > **Compiler:** MetaEditor 64-bit via Wine CLI & GUI  
 
 ---
