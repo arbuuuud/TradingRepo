@@ -22,7 +22,7 @@ input group "=== General & Risk Settings ==="
 input ulong                InpMagicNumber          = 888201;          // Magic Number
 input double               InpRiskPercent          = 1.0;             // Risk % of Equity per Trade
 input double               InpMaxDailyLossPct      = 5.0;             // Max Daily Loss % (0 to disable)
-input int                  InpMaxSpreadPoints      = 30;              // Max Allowed Spread (Points)
+input int                  InpMaxSpreadPoints      = 35;              // Max Allowed Spread (Points)
 input int                  InpSlippagePoints       = 10;              // Slippage Deviation (Points)
 
 input group "=== Fibonacci & Strategy Settings ==="

@@ -30,7 +30,7 @@ input double            InpFixedLot          = 0.01;             // Fixed Lot Si
 input double            InpRiskPercent       = 1.0;              // Risk % of Equity per Trade
 input double            InpStopLossPoints    = 200.0;            // Stop Loss in Points (10 pips = 100 pts)
 input double            InpTakeProfitPoints  = 400.0;            // Take Profit in Points (20 pips = 200 pts)
-input int               InpMaxSpreadPoints   = 25;               // Max Allowed Spread in Points
+input int               InpMaxSpreadPoints   = 35;               // Max Allowed Spread in Points
 input double            InpMaxDailyLossPct   = 5.0;              // Max Daily Drawdown % (0 to disable)
 
 input group "=== Strategy Parameters ==="

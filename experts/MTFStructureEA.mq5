@@ -22,7 +22,7 @@ input group "=== General & Risk Settings ==="
 input ulong             InpMagicNumber       = 888103;          // Magic Number
 input double            InpRiskPercent       = 1.0;             // Risk % of Equity per Trade
 input double            InpMaxDailyLossPct   = 5.0;             // Max Daily Drawdown % (0 to disable)
-input int               InpMaxSpreadPoints   = 30;              // Max Allowed Spread (Points)
+input int               InpMaxSpreadPoints   = 35;              // Max Allowed Spread (Points)
 input int               InpSlippagePoints    = 10;              // Deviation / Slippage (Points)
 
 input group "=== Smart SL & Breakeven ==="
