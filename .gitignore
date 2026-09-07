@@ -1,0 +1,15 @@
+# MQL5 Compiled Binaries
+*.ex5
+
+# Editor and IDE files
+.DS_Store
+*.log
+*.bak
+*.orig
+Thumbs.db
+
+# MetaTrader temporary and test data
+*.dat
+*.ini
+Tester/
+logs/
