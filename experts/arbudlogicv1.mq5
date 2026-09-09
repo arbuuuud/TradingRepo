@@ -41,6 +41,10 @@ input bool              InpUseCandleCloseSL  = true;            // Cutloss on M1
 input double            InpCloseZoneMinPct   = 15.0;            // Min % outside Floor/Roof for M1 Close SL (Default: 15%)
 input double            InpCloseZoneMaxPct   = 30.0;            // Max % outside Floor/Roof for M1 Close SL (Default: 30%)
 
+input group "=== Equilibrium (M3 Structure) Settings ==="
+input bool              InpEnableEquilibrium = true;            // Filter Buy in Discount (<50%) & Sell in Premium (>50%)
+input int               InpM3Lookback        = 3;               // M3 confirmed structures lookback count (2-3)
+
 input group "=== M1 Structure Settings ==="
 input bool              InpEnableStructM1    = true;            // Enable M1 Structure Detection
 input bool              InpDrawStructM1      = true;            // Draw M1 Structure on Chart
@@ -81,6 +85,7 @@ datetime g_lastM1BarTime  = 0;
 void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel);
 void ManageSmartTP(const string symbol, const SRoofFloorChannel &channel, const double bid, const double ask);
 void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentChannel);
+bool CalculateM3Equilibrium(const string symbol, const int lookback, double &outEq, double &outHigh, double &outLow);
 void CloseAllPositionsAndOrders(const string symbol, const string reason);
 void CancelAllPendingOrders(const string symbol, const string reason);
 void CancelPendingOrdersByBatch(const int batchId, const string reason);
@@ -227,6 +232,30 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
    }
 
    double range = channel.roofPrice - channel.floorPrice;
+
+   // ---------------------------------------------------------------
+   // Equilibrium Filter: M3 Multi-Structure Range (50%)
+   // BUY harus di Discount (< 50%), SELL harus di Premium (> 50%)
+   // ---------------------------------------------------------------
+   double eqM3 = 0.0, highM3 = 0.0, lowM3 = 0.0;
+   bool hasEq = false;
+   if(InpEnableEquilibrium)
+   {
+      hasEq = CalculateM3Equilibrium(symbol, InpM3Lookback, eqM3, highM3, lowM3);
+      if(hasEq)
+      {
+         // Buy Area Boundary (25% channel) harus di bawah Equilibrium M3 (Discount Zone)
+         if(channel.levelBuyBoundary > eqM3)
+         {
+            allowBuy = false;
+         }
+         // Sell Area Boundary (75% channel) harus di atas Equilibrium M3 (Premium Zone)
+         if(channel.levelSellBoundary < eqM3)
+         {
+            allowSell = false;
+         }
+      }
+   }
 
    // ---------------------------------------------------------------
    // A. BUY LIMIT GRID IN BUY AREA (0% - 25%)
@@ -594,6 +623,63 @@ void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentCha
          }
       }
    }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate M3 Equilibrium (50% from last 2-3 confirmed structures)|
+//+------------------------------------------------------------------+
+bool CalculateM3Equilibrium(const string symbol, const int lookback, double &outEq, double &outHigh, double &outLow)
+{
+   SStructurePoint structures[];
+   if(!ExtStructure.GetStructures(PERIOD_M3, structures))
+   {
+      // Fallback: Gunakan High/Low bar M3 ke belakang jika struktur belum cukup
+      int bars = MathMax(lookback * 5, 20);
+      int hBar = iHighest(symbol, PERIOD_M3, MODE_HIGH, bars, 1);
+      int lBar = iLowest(symbol, PERIOD_M3, MODE_LOW, bars, 1);
+      if(hBar >= 0 && lBar >= 0)
+      {
+         outHigh = iHigh(symbol, PERIOD_M3, hBar);
+         outLow  = iLow(symbol, PERIOD_M3, lBar);
+         outEq   = outLow + 0.5 * (outHigh - outLow);
+         return (outHigh > outLow);
+      }
+      return false;
+   }
+
+   int total = ArraySize(structures);
+   if(total <= 0) return false;
+
+   int count = MathMin(lookback, total);
+   outHigh = 0.0;
+   outLow  = DBL_MAX;
+
+   for(int i = total - 1; i >= total - count; i--)
+   {
+      double h = structures[i].priceH;
+      double l = structures[i].priceL;
+      if(h > outHigh) outHigh = h;
+      if(l < outLow && l > 0.0) outLow = l;
+   }
+
+   if(outHigh <= outLow || outLow == DBL_MAX)
+   {
+      // Fallback to bar range
+      int hBar = iHighest(symbol, PERIOD_M3, MODE_HIGH, 30, 1);
+      int lBar = iLowest(symbol, PERIOD_M3, MODE_LOW, 30, 1);
+      if(hBar >= 0 && lBar >= 0)
+      {
+         outHigh = iHigh(symbol, PERIOD_M3, hBar);
+         outLow  = iLow(symbol, PERIOD_M3, lBar);
+      }
+   }
+
+   if(outHigh > outLow)
+   {
+      outEq = outLow + 0.5 * (outHigh - outLow);
+      return true;
+   }
+   return false;
 }
 
 //+------------------------------------------------------------------+
