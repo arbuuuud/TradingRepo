@@ -49,18 +49,20 @@ struct STimeframeStructureData
    bool              drawEnabled;
    ENUM_STR_TREND    trend;
    datetime          lastBarTime;
+   bool              hasNewStructure;
 
    SStructurePoint   structures[];
    SStructurePoint   pivotStructure;
 
    void Init(ENUM_TIMEFRAMES period, color clr = clrDodgerBlue, int width = 1, bool draw = true)
    {
-      tf          = period;
-      lineColor   = clr;
-      lineWidth   = width;
-      drawEnabled = draw;
-      trend       = STR_TREND_NONE;
-      lastBarTime = 0;
+      tf              = period;
+      lineColor       = clr;
+      lineWidth       = width;
+      drawEnabled     = draw;
+      trend           = STR_TREND_NONE;
+      lastBarTime     = 0;
+      hasNewStructure = false;
 
       ArrayResize(structures, 0);
       pivotStructure.Init();
@@ -140,6 +142,7 @@ public:
    {
       for(int i = 0; i < m_totalTFs; i++)
       {
+         m_tfList[i].hasNewStructure = false; // Reset flag each check
          ENUM_TIMEFRAMES tf = m_tfList[i].tf;
          datetime currentBarTime = iTime(symbol, tf, 0);
 
@@ -152,8 +155,16 @@ public:
             ArraySetAsSeries(rates, true);
             if(CopyRates(symbol, tf, 0, 4, rates) >= 4)
             {
+               int beforeCount = ArraySize(m_tfList[i].structures);
+
                // Process candle close (rates[1], rates[2], rates[3])
                ProcessStructureWithRates(m_tfList[i], rates[1], rates[2], rates[3]);
+
+               int afterCount = ArraySize(m_tfList[i].structures);
+               if(afterCount > beforeCount)
+               {
+                  m_tfList[i].hasNewStructure = true;
+               }
 
                if(m_tfList[i].drawEnabled)
                {
@@ -170,6 +181,16 @@ public:
    void ClearChartObjects()
    {
       ObjectsDeleteAll(0, m_objPrefix);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Getter: Check if new structure was formed on last candle close   |
+   //+------------------------------------------------------------------+
+   bool HasNewStructure(const ENUM_TIMEFRAMES tf)
+   {
+      int idx = FindTFIndex(tf);
+      if(idx < 0) return false;
+      return m_tfList[idx].hasNewStructure;
    }
 
    //+------------------------------------------------------------------+

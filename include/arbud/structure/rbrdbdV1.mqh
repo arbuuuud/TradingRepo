@@ -278,7 +278,23 @@ public:
             if(m_tfList[i].drawRoofFloor)
             {
                double curPrice = SymbolInfoDouble(symbol, SYMBOL_BID);
-               CalculateRoofFloorChannel(symbol, m_tfList[i], curPrice, structureEngine);
+
+               // Rule: Hanya daftarkan/buat Floor-Roof baru jika ada Structure Baru di M15
+               bool allowNewChannel = true;
+               if(structureEngine != NULL)
+               {
+                  allowNewChannel = structureEngine.HasNewStructure(PERIOD_M15);
+               }
+
+               if(allowNewChannel || !m_tfList[i].currentChannel.isValid)
+               {
+                  CalculateRoofFloorChannel(symbol, m_tfList[i], curPrice, structureEngine);
+               }
+               else
+               {
+                  // Pertahankan channel lama dan hanya pantau konsumsinya
+                  UpdateRoofFloorConsumptionOnly(symbol, m_tfList[i], curPrice);
+               }
                DrawRoofFloorChannel(m_tfList[i]);
             }
          }
@@ -316,7 +332,8 @@ public:
          if(m_tfList[i].drawRoofFloor)
          {
             double curPrice = (bid > 0) ? bid : ask;
-            CalculateRoofFloorChannel(symbol, m_tfList[i], curPrice, structureEngine);
+            // Update real-time consumption pada channel aktif yang sudah ada
+            UpdateRoofFloorConsumptionOnly(symbol, m_tfList[i], curPrice);
             DrawRoofFloorChannel(m_tfList[i]);
          }
       }
@@ -1209,6 +1226,77 @@ private:
       outTime  = times[1];
       outLabel = labels[1];
       return true;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Update only consumption & invalidation of existing Floor/Roof   |
+   //+------------------------------------------------------------------+
+   void UpdateRoofFloorConsumptionOnly(const string symbol, STimeframeRBRDBDData &data, const double currentPrice)
+   {
+      if(!data.currentChannel.isValid) return;
+
+      // ATURAN HAPUS: Hanya boleh terhapus kalau candle close di atas stop area (>130%)
+      // atau di bawah stop area (<-30%)
+      MqlRates lastRates[];
+      ArraySetAsSeries(lastRates, true);
+      if(CopyRates(symbol, data.tf, 1, 1, lastRates) >= 1)
+      {
+         if(lastRates[0].close >= data.currentChannel.levelStopTop || lastRates[0].close <= data.currentChannel.levelStopBottom)
+         {
+            PrintFormat("[TransactionArea] Channel %s invalidated by bar close outside Stop Area (Close: %.5f, Top130: %.5f, Bot-30: %.5f)",
+                        EnumToString(data.tf), lastRates[0].close, data.currentChannel.levelStopTop, data.currentChannel.levelStopBottom);
+            data.currentChannel.Init();
+            data.currentChannel.channelName = m_objPrefix + EnumToString(data.tf) + "_RoofFloor";
+            data.currentChannel.isValid = false;
+            return;
+         }
+      }
+
+      // Track consumption of Buy Area (0%-25%) & Sell Area (75%-100%)
+      double buyAreaHeight  = data.currentChannel.levelBuyBoundary - data.currentChannel.floorPrice;   // 25% of range
+      double sellAreaHeight = data.currentChannel.roofPrice - data.currentChannel.levelSellBoundary;  // 25% of range
+
+      double currentBid = SymbolInfoDouble(symbol, SYMBOL_BID);
+      double currentAsk = SymbolInfoDouble(symbol, SYMBOL_ASK);
+      double lowCheck   = (currentBid > 0) ? currentBid : currentPrice;
+      double highCheck  = (currentAsk > 0) ? currentAsk : currentPrice;
+
+      if(ArraySize(lastRates) > 0)
+      {
+         if(lastRates[0].low < lowCheck)   lowCheck  = lastRates[0].low;
+         if(lastRates[0].high > highCheck) highCheck = lastRates[0].high;
+      }
+
+      // Buy Area Used: Price masuk dari level 25% turun mendekati floor (0%)
+      if(buyAreaHeight > 0.0 && lowCheck < data.currentChannel.levelBuyBoundary)
+      {
+         double penetration = data.currentChannel.levelBuyBoundary - lowCheck;
+         double pct = (penetration / buyAreaHeight) * 100.0;
+         if(pct > data.currentChannel.buyAreaUsedPct)
+            data.currentChannel.buyAreaUsedPct = MathMin(NormalizeDouble(pct, 1), 100.0);
+      }
+
+      // Sell Area Used: Price masuk dari level 75% naik mendekati roof (100%)
+      if(sellAreaHeight > 0.0 && highCheck > data.currentChannel.levelSellBoundary)
+      {
+         double penetration = highCheck - data.currentChannel.levelSellBoundary;
+         double pct = (penetration / sellAreaHeight) * 100.0;
+         if(pct > data.currentChannel.sellAreaUsedPct)
+            data.currentChannel.sellAreaUsedPct = MathMin(NormalizeDouble(pct, 1), 100.0);
+      }
+
+      data.currentChannel.endTime = TimeCurrent() + (PeriodSeconds(data.tf) * 15);
+
+      // Update di history
+      int listSize = ArraySize(data.channelsHistory);
+      for(int h = 0; h < listSize; h++)
+      {
+         if(data.channelsHistory[h].batchId == data.currentChannel.batchId)
+         {
+            data.channelsHistory[h] = data.currentChannel;
+            break;
+         }
+      }
    }
 
    //+------------------------------------------------------------------+
