@@ -32,6 +32,7 @@ input bool              InpEnableSellLimit   = true;            // Enable Sell L
 input group "=== Smart TP & Exit Settings ==="
 input bool              InpEnableSmartTP     = true;            // Enable Early TP Exit when Area Used >= 75%
 input double            InpSmartTPThreshold  = 75.0;            // Threshold % to trigger Smart TP & Cancel Grid (Default 75%)
+input int               InpDefaultSpreadPoints = 35;            // Default Spread Points for Smart TP buffer (Min profit = 2x spread)
 
 input group "=== M1 Structure Settings ==="
 input bool              InpEnableStructM1    = true;            // Enable M1 Structure Detection
@@ -181,7 +182,6 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
    {
       g_lastChannelRoof  = channel.roofPrice;
       g_lastChannelFloor = channel.floorPrice;
-      CancelAllPendingOrders(symbol, "Channel Realigned / Shifted");
       ArrayResize(g_placedBuyPrices, 0);
       ArrayResize(g_placedSellPrices, 0);
    }
@@ -266,59 +266,41 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
 
 //+------------------------------------------------------------------+
 //| Smart TP: Early Exit if area was deeply consumed (>= 75%)        |
-//| Extra Logic: Old Batches are closed as soon as net profit > 0.0  |
+//| Extra Logic: Old Batches are closed as soon as net profit >=     |
+//|              2x spread per position AND new batch has active pos |
 //+------------------------------------------------------------------+
 void ManageSmartTP(const string symbol, const SRoofFloorChannel &currentChannel, const double bid, const double ask)
 {
    // ---------------------------------------------------------------
-   // 1. EVALUASI BATCH LAMA: JIKA TOTAL PROFIT BATCH > 0 -> CLOSE ALL
+   // 1. EVALUASI BATCH LAMA:
+   //    Syarat A: Batch baru (currentChannel.batchId) SUDAH masuk posisi (bukan hanya pending order)
+   //    Syarat B: Total profit batch lama >= 2x spread per posisi (default 35 points)
    // ---------------------------------------------------------------
-   // Identifikasi semua batch lama yang masih memiliki posisi terbuka
-   int oldBatchIds[];
-   ArrayResize(oldBatchIds, 0);
-
-   for(int i = 0; i < PositionsTotal(); i++)
+   int currentBatchActivePos = 0;
+   if(currentChannel.batchId > 0)
    {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket <= 0) continue;
-      if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
-      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
-
-      string posComment = PositionGetString(POSITION_COMMENT);
-      int posBatchId = 0;
-      if(StringFind(posComment, "B") == 0)
+      string currentBatchPrefix = StringFormat("B%d_", currentChannel.batchId);
+      for(int i = 0; i < PositionsTotal(); i++)
       {
-         int underscoreIdx = StringFind(posComment, "_");
-         if(underscoreIdx > 1)
-         {
-            string idStr = StringSubstr(posComment, 1, underscoreIdx - 1);
-            posBatchId = (int)StringToInteger(idStr);
-         }
-      }
+         ulong ticket = PositionGetTicket(i);
+         if(ticket <= 0) continue;
+         if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
+         if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
 
-      // Kategori Batch Lama: ID batch lebih kecil dari currentChannel.batchId
-      if(posBatchId > 0 && currentChannel.batchId > 0 && posBatchId < currentChannel.batchId)
-      {
-         bool exists = false;
-         for(int b = 0; b < ArraySize(oldBatchIds); b++)
+         string posComment = PositionGetString(POSITION_COMMENT);
+         if(StringFind(posComment, currentBatchPrefix) == 0)
          {
-            if(oldBatchIds[b] == posBatchId) { exists = true; break; }
-         }
-         if(!exists)
-         {
-            int sz = ArraySize(oldBatchIds);
-            ArrayResize(oldBatchIds, sz + 1);
-            oldBatchIds[sz] = posBatchId;
+            currentBatchActivePos++;
          }
       }
    }
 
-   // Hitung total profit per batch lama dan close jika profit neto > 0
-   for(int b = 0; b < ArraySize(oldBatchIds); b++)
+   // Hanya evaluasi penutupan batch lama JIKA batch baru SUDAH ada posisi aktif terbuka
+   if(currentBatchActivePos > 0)
    {
-      int bId = oldBatchIds[b];
-      double batchNetProfit = 0.0;
-      int batchPosCount = 0;
+      // Identifikasi semua batch lama yang masih memiliki posisi terbuka
+      int oldBatchIds[];
+      ArrayResize(oldBatchIds, 0);
 
       for(int i = 0; i < PositionsTotal(); i++)
       {
@@ -328,21 +310,48 @@ void ManageSmartTP(const string symbol, const SRoofFloorChannel &currentChannel,
          if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
 
          string posComment = PositionGetString(POSITION_COMMENT);
-         string bPrefix = StringFormat("B%d_", bId);
-         if(StringFind(posComment, bPrefix) == 0)
+         int posBatchId = 0;
+         if(StringFind(posComment, "B") == 0)
          {
-            batchNetProfit += (PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP));
-            batchPosCount++;
+            int underscoreIdx = StringFind(posComment, "_");
+            if(underscoreIdx > 1)
+            {
+               string idStr = StringSubstr(posComment, 1, underscoreIdx - 1);
+               posBatchId = (int)StringToInteger(idStr);
+            }
+         }
+
+         // Kategori Batch Lama: ID batch lebih kecil dari currentChannel.batchId
+         if(posBatchId > 0 && currentChannel.batchId > 0 && posBatchId < currentChannel.batchId)
+         {
+            bool exists = false;
+            for(int b = 0; b < ArraySize(oldBatchIds); b++)
+            {
+               if(oldBatchIds[b] == posBatchId) { exists = true; break; }
+            }
+            if(!exists)
+            {
+               int sz = ArraySize(oldBatchIds);
+               ArrayResize(oldBatchIds, sz + 1);
+               oldBatchIds[sz] = posBatchId;
+            }
          }
       }
 
-      if(batchPosCount > 0 && batchNetProfit > 0.0)
-      {
-         PrintFormat("[SmartTP OldBatch] Batch B%d has %d positions with total net profit %.2f (> 0). Closing batch!",
-                     bId, batchPosCount, batchNetProfit);
+      // Hitung total profit per batch lama dan close jika profit neto >= 2x spread
+      double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+      double tickSize  = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+      double point     = SymbolInfoDouble(symbol, SYMBOL_POINT);
+      double pointValue = (tickSize > 0) ? (tickValue * (point / tickSize)) : 0.0;
 
-         // Tutup semua posisi terbuka milik batch ini
-         for(int i = PositionsTotal() - 1; i >= 0; i--)
+      for(int b = 0; b < ArraySize(oldBatchIds); b++)
+      {
+         int bId = oldBatchIds[b];
+         double batchNetProfit = 0.0;
+         int batchPosCount = 0;
+         double totalBatchVolume = 0.0;
+
+         for(int i = 0; i < PositionsTotal(); i++)
          {
             ulong ticket = PositionGetTicket(i);
             if(ticket <= 0) continue;
@@ -353,12 +362,43 @@ void ManageSmartTP(const string symbol, const SRoofFloorChannel &currentChannel,
             string bPrefix = StringFormat("B%d_", bId);
             if(StringFind(posComment, bPrefix) == 0)
             {
-               ExtTrade.PositionClose(ticket);
+               batchNetProfit += (PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP));
+               totalBatchVolume += PositionGetDouble(POSITION_VOLUME);
+               batchPosCount++;
             }
          }
 
-         // Batalkan semua pending orders milik batch ini
-         CancelPendingOrdersByBatch(bId, "Old Batch Net Profit > 0 (Smart TP Closed)");
+         // Target minimal profit: 2x Spread Points per lot volume (default: 2 * 35 points = 70 points)
+         double requiredSpreadProfit = 0.0;
+         if(pointValue > 0.0)
+         {
+            requiredSpreadProfit = (2.0 * InpDefaultSpreadPoints) * pointValue * (totalBatchVolume / (SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP) > 0 ? 1.0 : 1.0));
+         }
+
+         if(batchPosCount > 0 && batchNetProfit > requiredSpreadProfit)
+         {
+            PrintFormat("[SmartTP OldBatch] Batch B%d has %d positions (Vol: %.2f) with net profit %.2f (Req: > %.2f [2x spread=%d pts]). New batch B%d has %d active positions. Closing batch!",
+                        bId, batchPosCount, totalBatchVolume, batchNetProfit, requiredSpreadProfit, InpDefaultSpreadPoints, currentChannel.batchId, currentBatchActivePos);
+
+            // Tutup semua posisi terbuka milik batch ini
+            for(int i = PositionsTotal() - 1; i >= 0; i--)
+            {
+               ulong ticket = PositionGetTicket(i);
+               if(ticket <= 0) continue;
+               if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
+               if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+               string posComment = PositionGetString(POSITION_COMMENT);
+               string bPrefix = StringFormat("B%d_", bId);
+               if(StringFind(posComment, bPrefix) == 0)
+               {
+                  ExtTrade.PositionClose(ticket);
+               }
+            }
+
+            // Batalkan semua pending orders milik batch ini
+            CancelPendingOrdersByBatch(bId, "Old Batch Profit >= 2x Spread & New Batch Active (Smart TP Closed)");
+         }
       }
    }
 
