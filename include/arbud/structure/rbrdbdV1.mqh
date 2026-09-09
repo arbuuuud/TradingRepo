@@ -64,6 +64,8 @@ struct SRBRDBDArea
 struct SRoofFloorChannel
 {
    bool              isValid;
+   int               batchId;          // Unique sequential ID for this Floor-Roof object
+   string            batchCode;        // Unique batch string code (e.g. "B1_M1")
    double            roofPrice;        // 100% boundary (Roof / DBD)
    double            floorPrice;       // 0% boundary (Floor / RBR)
    double            rangeHeight;      // roofPrice - floorPrice
@@ -88,6 +90,8 @@ struct SRoofFloorChannel
    void Init()
    {
       isValid           = false;
+      batchId           = 0;
+      batchCode         = "";
       roofPrice         = 0.0;
       floorPrice        = 0.0;
       rangeHeight       = 0.0;
@@ -128,6 +132,8 @@ struct STimeframeRBRDBDData
 
    SRBRDBDArea       areas[];
    SRoofFloorChannel currentChannel;
+   SRoofFloorChannel channelsHistory[]; // List of all channels
+   int               channelCounter;
 
    void Init(ENUM_TIMEFRAMES period, 
              int minBase = 1, 
@@ -157,8 +163,10 @@ struct STimeframeRBRDBDData
       floorColor     = clrFloor;
       channelBgColor = clrBg;
       lastBarTime    = 0;
+      channelCounter = 0;
 
       ArrayResize(areas, 0);
+      ArrayResize(channelsHistory, 0);
       currentChannel.Init();
    }
 };
@@ -370,6 +378,26 @@ public:
 
       outChannel = m_tfList[idx].currentChannel;
       return true;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Find a specific channel by its unique batchId                    |
+   //+------------------------------------------------------------------+
+   bool GetChannelByBatchId(const ENUM_TIMEFRAMES tf, const int batchId, SRoofFloorChannel &outChannel)
+   {
+      int idx = FindTFIndex(tf);
+      if(idx < 0) return false;
+
+      int total = ArraySize(m_tfList[idx].channelsHistory);
+      for(int i = total - 1; i >= 0; i--)
+      {
+         if(m_tfList[idx].channelsHistory[i].batchId == batchId)
+         {
+            outChannel = m_tfList[idx].channelsHistory[i];
+            return true;
+         }
+      }
+      return false;
    }
 
 private:
@@ -942,8 +970,31 @@ private:
       }
 
       // ====================================================================
-      // 4. PEMBENTUKAN ZONA TRANSACTION AREA
+      // 4. PEMBENTUKAN ZONA TRANSACTION AREA & BATCH ID MANAGEMENT
       // ====================================================================
+      // Deteksi apakah batas Roof atau Floor berubah -> New Batch!
+      double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+      double tol = 2.0 * point;
+      bool isNewBatch = false;
+
+      if(!data.currentChannel.isValid ||
+         MathAbs(data.currentChannel.roofPrice - roofPrice) > tol ||
+         MathAbs(data.currentChannel.floorPrice - floorPrice) > tol)
+      {
+         isNewBatch = true;
+      }
+
+      if(isNewBatch)
+      {
+         data.channelCounter++;
+         data.currentChannel.batchId   = data.channelCounter;
+         data.currentChannel.batchCode = StringFormat("B%d_%s", data.channelCounter, EnumToString(data.tf));
+         data.currentChannel.buyAreaUsedPct  = 0.0;
+         data.currentChannel.sellAreaUsedPct = 0.0;
+         PrintFormat("[TransactionArea] New Batch Created: %s on %s. Roof: %.5f (%s), Floor: %.5f (%s)",
+                     data.currentChannel.batchCode, EnumToString(data.tf), roofPrice, roofSource, floorPrice, floorSource);
+      }
+
       data.currentChannel.isValid           = true;
       data.currentChannel.roofPrice         = roofPrice;
       data.currentChannel.floorPrice        = floorPrice;
@@ -996,6 +1047,24 @@ private:
       data.currentChannel.startTime   = tStart;
       data.currentChannel.endTime     = TimeCurrent() + (PeriodSeconds(data.tf) * 15);
       data.currentChannel.channelName = m_objPrefix + EnumToString(data.tf) + "_RoofFloor";
+
+      // Save/Update to channelsHistory list
+      bool foundInList = false;
+      int listSize = ArraySize(data.channelsHistory);
+      for(int h = 0; h < listSize; h++)
+      {
+         if(data.channelsHistory[h].batchId == data.currentChannel.batchId)
+         {
+            data.channelsHistory[h] = data.currentChannel;
+            foundInList = true;
+            break;
+         }
+      }
+      if(!foundInList)
+      {
+         ArrayResize(data.channelsHistory, listSize + 1);
+         data.channelsHistory[listSize] = data.currentChannel;
+      }
    }
 
    //+------------------------------------------------------------------+
@@ -1231,8 +1300,8 @@ private:
       DrawText(lblSell, tStart, p100, StringFormat(" SELL AREA (75-100%%) %s", sellStatus), clrLightCoral, 8);
       DrawText(lblBuy,  tStart, p25,  StringFormat(" BUY AREA (0-25%%) %s", buyStatus), clrPaleGreen, 8);
 
-      string header = StringFormat(" [%s Transaction Area] Roof: %.5f (%s) | Floor: %.5f (%s)",
-                                   EnumToString(data.tf), p100, data.currentChannel.roofSource,
+      string header = StringFormat(" [%s %s] Roof: %.5f (%s) | Floor: %.5f (%s)",
+                                   data.currentChannel.batchCode, EnumToString(data.tf), p100, data.currentChannel.roofSource,
                                    p0, data.currentChannel.floorSource);
       DrawText(lblStatus, tStart, p130, header, clrWhiteSmoke, 9);
    }
