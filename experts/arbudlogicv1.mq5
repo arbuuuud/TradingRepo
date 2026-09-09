@@ -25,9 +25,11 @@ input int               InpHistoryBars       = 500;             // History Bars 
 
 input group "=== Grid Entry Settings ==="
 input double            InpStaticLot         = 0.01;            // Static Order Volume
-input int               InpMaxEntry          = 5;               // Max Grid Entry Points per Area (>= 2)
+input int               InpMaxEntry          = 2;               // Max Grid Entry Points per Area (PAC Recommended: 1-2)
 input bool              InpEnableBuyLimit    = true;            // Enable Buy Limit Grid in Buy Area (0-25%)
 input bool              InpEnableSellLimit   = true;            // Enable Sell Limit Grid in Sell Area (75-100%)
+input bool              InpFilterByControlTrend = true;         // PAC: Filter Entry by M3 Structure Trend (Bull=Buy only, Bear=Sell only)
+input double            InpSLBufferPercent   = 5.0;             // PAC: SL Buffer % outside Floor/Roof (e.g. 5% = -5% / 105% vs old -30%/130%)
 
 input group "=== Smart TP & Exit Settings ==="
 input bool              InpEnableSmartTP     = true;            // Enable Early TP Exit when Area Used >= 75%
@@ -194,17 +196,42 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
    double curAsk = SymbolInfoDouble(symbol, SYMBOL_ASK);
 
    // ---------------------------------------------------------------
+   // PAC: Cek Trend Kontrol M3 (Bullish vs Bearish)
+   // ---------------------------------------------------------------
+   ENUM_STR_TREND m3Trend = ExtStructure.GetTrend(PERIOD_M3);
+   bool allowBuy  = InpEnableBuyLimit;
+   bool allowSell = InpEnableSellLimit;
+
+   if(InpFilterByControlTrend)
+   {
+      // Jika M3 Bullish Control -> Hanya boleh BUY di Floor/Demand
+      if(m3Trend == STR_TREND_BULL)
+      {
+         allowSell = false;
+      }
+      // Jika M3 Bearish Control -> Hanya boleh SELL di Roof/Supply
+      else if(m3Trend == STR_TREND_BEAR)
+      {
+         allowBuy = false;
+      }
+   }
+
+   double range = channel.roofPrice - channel.floorPrice;
+
+   // ---------------------------------------------------------------
    // A. BUY LIMIT GRID IN BUY AREA (0% - 25%)
    // ---------------------------------------------------------------
-   // Syarat: Buy Area belum 100% used
-   if(InpEnableBuyLimit && channel.buyAreaUsedPct < 100.0)
+   // Syarat: Buy diizinkan dan Buy Area belum 100% used
+   if(allowBuy && channel.buyAreaUsedPct < 100.0)
    {
       double buyAreaTop = channel.levelBuyBoundary; // 25%
       double buyAreaBot = channel.floorPrice;       // 0%
-      double step = (buyAreaTop - buyAreaBot) / (InpMaxEntry - 1);
+      double step = (InpMaxEntry > 1) ? (buyAreaTop - buyAreaBot) / (InpMaxEntry - 1) : 0.0;
 
-      double slPrice = NormalizeDouble(channel.levelStopBottom, digits); // -30%
-      double tpPrice = NormalizeDouble(channel.levelTPBuy, digits);      // 45% (Buy TP)
+      // PAC Tight SL: Diletakkan sedikit di bawah Floor (default: 5% dari range di bawah floorPrice)
+      double slPriceRaw = channel.floorPrice - (range * (InpSLBufferPercent / 100.0));
+      double slPrice = NormalizeDouble(slPriceRaw, digits);
+      double tpPrice = NormalizeDouble(channel.levelTPBuy, digits); // 45% (Buy TP)
 
       for(int i = 0; i < InpMaxEntry; i++)
       {
@@ -221,8 +248,8 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
          string comment = StringFormat("B%d_BL%d", channel.batchId, i);
          if(ExtTrade.BuyLimit(InpStaticLot, gridPrice, symbol, slPrice, tpPrice, ORDER_TIME_GTC, 0, comment))
          {
-            PrintFormat("[Grid] Placed Buy Limit #%d at %.5f (SL: %.5f, TP: %.5f, Batch: %s)", 
-                        i, gridPrice, slPrice, tpPrice, channel.batchCode);
+            PrintFormat("[PAC Grid] Placed Buy Limit #%d at %.5f (SL: %.5f, TP: %.5f, Trend: %d, Batch: %s)", 
+                        i, gridPrice, slPrice, tpPrice, m3Trend, channel.batchCode);
             AddPlacedPrice(gridPrice, g_placedBuyPrices);
          }
       }
@@ -231,15 +258,17 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
    // ---------------------------------------------------------------
    // B. SELL LIMIT GRID IN SELL AREA (75% - 100%)
    // ---------------------------------------------------------------
-   // Syarat: Sell Area belum 100% used
-   if(InpEnableSellLimit && channel.sellAreaUsedPct < 100.0)
+   // Syarat: Sell diizinkan dan Sell Area belum 100% used
+   if(allowSell && channel.sellAreaUsedPct < 100.0)
    {
       double sellAreaBot = channel.levelSellBoundary; // 75%
       double sellAreaTop = channel.roofPrice;         // 100%
-      double step = (sellAreaTop - sellAreaBot) / (InpMaxEntry - 1);
+      double step = (InpMaxEntry > 1) ? (sellAreaTop - sellAreaBot) / (InpMaxEntry - 1) : 0.0;
 
-      double slPrice = NormalizeDouble(channel.levelStopTop, digits);    // 130%
-      double tpPrice = NormalizeDouble(channel.levelTPSell, digits);     // 55% (Sell TP)
+      // PAC Tight SL: Diletakkan sedikit di atas Roof (default: 5% dari range di atas roofPrice)
+      double slPriceRaw = channel.roofPrice + (range * (InpSLBufferPercent / 100.0));
+      double slPrice = NormalizeDouble(slPriceRaw, digits);
+      double tpPrice = NormalizeDouble(channel.levelTPSell, digits); // 55% (Sell TP)
 
       for(int i = 0; i < InpMaxEntry; i++)
       {
@@ -256,8 +285,8 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
          string comment = StringFormat("B%d_SL%d", channel.batchId, i);
          if(ExtTrade.SellLimit(InpStaticLot, gridPrice, symbol, slPrice, tpPrice, ORDER_TIME_GTC, 0, comment))
          {
-            PrintFormat("[Grid] Placed Sell Limit #%d at %.5f (SL: %.5f, TP: %.5f, Batch: %s)", 
-                        i, gridPrice, slPrice, tpPrice, channel.batchCode);
+            PrintFormat("[PAC Grid] Placed Sell Limit #%d at %.5f (SL: %.5f, TP: %.5f, Trend: %d, Batch: %s)", 
+                        i, gridPrice, slPrice, tpPrice, m3Trend, channel.batchCode);
             AddPlacedPrice(gridPrice, g_placedSellPrices);
          }
       }
