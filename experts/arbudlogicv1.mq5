@@ -265,10 +265,106 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
 }
 
 //+------------------------------------------------------------------+
-//| Smart TP: Early Exit if area was deeply consumed (>= 80%)        |
+//| Smart TP: Early Exit if area was deeply consumed (>= 75%)        |
+//| Extra Logic: Old Batches are closed as soon as net profit > 0.0  |
 //+------------------------------------------------------------------+
 void ManageSmartTP(const string symbol, const SRoofFloorChannel &currentChannel, const double bid, const double ask)
 {
+   // ---------------------------------------------------------------
+   // 1. EVALUASI BATCH LAMA: JIKA TOTAL PROFIT BATCH > 0 -> CLOSE ALL
+   // ---------------------------------------------------------------
+   // Identifikasi semua batch lama yang masih memiliki posisi terbuka
+   int oldBatchIds[];
+   ArrayResize(oldBatchIds, 0);
+
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+      string posComment = PositionGetString(POSITION_COMMENT);
+      int posBatchId = 0;
+      if(StringFind(posComment, "B") == 0)
+      {
+         int underscoreIdx = StringFind(posComment, "_");
+         if(underscoreIdx > 1)
+         {
+            string idStr = StringSubstr(posComment, 1, underscoreIdx - 1);
+            posBatchId = (int)StringToInteger(idStr);
+         }
+      }
+
+      // Kategori Batch Lama: ID batch lebih kecil dari currentChannel.batchId
+      if(posBatchId > 0 && currentChannel.batchId > 0 && posBatchId < currentChannel.batchId)
+      {
+         bool exists = false;
+         for(int b = 0; b < ArraySize(oldBatchIds); b++)
+         {
+            if(oldBatchIds[b] == posBatchId) { exists = true; break; }
+         }
+         if(!exists)
+         {
+            int sz = ArraySize(oldBatchIds);
+            ArrayResize(oldBatchIds, sz + 1);
+            oldBatchIds[sz] = posBatchId;
+         }
+      }
+   }
+
+   // Hitung total profit per batch lama dan close jika profit neto > 0
+   for(int b = 0; b < ArraySize(oldBatchIds); b++)
+   {
+      int bId = oldBatchIds[b];
+      double batchNetProfit = 0.0;
+      int batchPosCount = 0;
+
+      for(int i = 0; i < PositionsTotal(); i++)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket <= 0) continue;
+         if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
+         if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+         string posComment = PositionGetString(POSITION_COMMENT);
+         string bPrefix = StringFormat("B%d_", bId);
+         if(StringFind(posComment, bPrefix) == 0)
+         {
+            batchNetProfit += (PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP));
+            batchPosCount++;
+         }
+      }
+
+      if(batchPosCount > 0 && batchNetProfit > 0.0)
+      {
+         PrintFormat("[SmartTP OldBatch] Batch B%d has %d positions with total net profit %.2f (> 0). Closing batch!",
+                     bId, batchPosCount, batchNetProfit);
+
+         // Tutup semua posisi terbuka milik batch ini
+         for(int i = PositionsTotal() - 1; i >= 0; i--)
+         {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket <= 0) continue;
+            if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
+            if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+            string posComment = PositionGetString(POSITION_COMMENT);
+            string bPrefix = StringFormat("B%d_", bId);
+            if(StringFind(posComment, bPrefix) == 0)
+            {
+               ExtTrade.PositionClose(ticket);
+            }
+         }
+
+         // Batalkan semua pending orders milik batch ini
+         CancelPendingOrdersByBatch(bId, "Old Batch Net Profit > 0 (Smart TP Closed)");
+      }
+   }
+
+   // ---------------------------------------------------------------
+   // 2. SMART TP STANDAR (UNTUK CURRENT BATCH / AREA PENETRATION)
+   // ---------------------------------------------------------------
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
