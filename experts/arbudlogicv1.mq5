@@ -30,8 +30,8 @@ input bool              InpEnableBuyLimit    = true;            // Enable Buy Li
 input bool              InpEnableSellLimit   = true;            // Enable Sell Limit Grid in Sell Area (75-100%)
 
 input group "=== Smart TP & Exit Settings ==="
-input bool              InpEnableSmartTP     = true;            // Enable Early TP Exit when Area Used >= 80%
-input double            InpSmartTPThreshold  = 80.0;            // Threshold % to trigger Smart TP (Default 80%)
+input bool              InpEnableSmartTP     = true;            // Enable Early TP Exit when Area Used >= 75%
+input double            InpSmartTPThreshold  = 75.0;            // Threshold % to trigger Smart TP & Cancel Grid (Default 75%)
 
 input group "=== M1 Structure Settings ==="
 input bool              InpEnableStructM1    = true;            // Enable M1 Structure Detection
@@ -73,6 +73,8 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel);
 void ManageSmartTP(const string symbol, const SRoofFloorChannel &channel, const double bid, const double ask);
 void CloseAllPositionsAndOrders(const string symbol, const string reason);
 void CancelAllPendingOrders(const string symbol, const string reason);
+void CancelPendingOrdersByBatch(const int batchId, const string reason);
+void CheckStandardTPClosedOrders();
 bool IsPriceAlreadyOrdered(const double price, const double &placedArray[], const double tolerance);
 void AddPlacedPrice(const double price, double &placedArray[]);
 
@@ -159,11 +161,14 @@ void OnTick()
    // 4. Manage Grid Limit Orders (Buy Limit in Buy Area, Sell Limit in Sell Area)
    ManageGridOrders(_Symbol, channel);
 
-   // 5. Smart TP Check (Early exit if area was consumed >= 80%)
+   // 5. Smart TP Check (Early exit if area was consumed >= 75%)
    if(InpEnableSmartTP)
    {
       ManageSmartTP(_Symbol, channel, bid, ask);
    }
+
+   // 6. Check Standard TP Deal Closures: if batch already hit TP & area >= 75% used -> cancel remaining pending orders
+   CheckStandardTPClosedOrders();
 }
 
 //+------------------------------------------------------------------+
@@ -303,26 +308,118 @@ void ManageSmartTP(const string symbol, const SRoofFloorChannel &currentChannel,
       }
 
       // --- Smart TP for BUY ---
-      // Jika Buy Area pernah kemakan >= 80%, dan harga sudah naik menyentuh pintu masuk TP Area Buy (Level 25%)
+      // Jika Buy Area pernah kemakan >= 75%, dan harga sudah naik menyentuh pintu masuk TP Area Buy (Level 25%)
       if(posType == POSITION_TYPE_BUY && targetChannel.buyAreaUsedPct >= InpSmartTPThreshold)
       {
          if(bid >= targetChannel.levelBuyBoundary)
          {
             PrintFormat("[SmartTP] BUY #%I64u (%s) closed at %.5f (Batch %d was %.1f%% used, reached 25%% TP Level %.5f)",
                         ticket, posComment, bid, targetChannel.batchId, targetChannel.buyAreaUsedPct, targetChannel.levelBuyBoundary);
-            ExtTrade.PositionClose(ticket);
+            if(ExtTrade.PositionClose(ticket))
+            {
+               // Hapus sisa limit order jika batch sudah TP dan area >= 75% used
+               CancelPendingOrdersByBatch(targetChannel.batchId, StringFormat("Smart TP Triggered & Area >= %.1f%% Used", InpSmartTPThreshold));
+            }
          }
       }
       // --- Smart TP for SELL ---
-      // Jika Sell Area pernah kemakan >= 80%, dan harga sudah turun menyentuh pintu masuk TP Area Sell (Level 75%)
+      // Jika Sell Area pernah kemakan >= 75%, dan harga sudah turun menyentuh pintu masuk TP Area Sell (Level 75%)
       else if(posType == POSITION_TYPE_SELL && targetChannel.sellAreaUsedPct >= InpSmartTPThreshold)
       {
          if(ask <= targetChannel.levelSellBoundary)
          {
             PrintFormat("[SmartTP] SELL #%I64u (%s) closed at %.5f (Batch %d was %.1f%% used, reached 75%% TP Level %.5f)",
                         ticket, posComment, ask, targetChannel.batchId, targetChannel.sellAreaUsedPct, targetChannel.levelSellBoundary);
-            ExtTrade.PositionClose(ticket);
+            if(ExtTrade.PositionClose(ticket))
+            {
+               // Hapus sisa limit order jika batch sudah TP dan area >= 75% used
+               CancelPendingOrdersByBatch(targetChannel.batchId, StringFormat("Smart TP Triggered & Area >= %.1f%% Used", InpSmartTPThreshold));
+            }
          }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check closed deals: If TP hit & Area >= 75% -> Cancel Pending   |
+//+------------------------------------------------------------------+
+void CheckStandardTPClosedOrders()
+{
+   // Query history of today / recent deals
+   datetime fromTime = TimeCurrent() - (PeriodSeconds(PERIOD_D1));
+   if(!HistorySelect(fromTime, TimeCurrent())) return;
+
+   int totalDeals = HistoryDealsTotal();
+   for(int i = totalDeals - 1; i >= 0; i--)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket <= 0) continue;
+      if(HistoryDealGetString(ticket, DEAL_SYMBOL) != _Symbol) continue;
+      if(HistoryDealGetInteger(ticket, DEAL_MAGIC) != InpMagicNumber) continue;
+
+      // Only check exit deals (DEAL_ENTRY_OUT)
+      ENUM_DEAL_ENTRY entryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      if(entryType != DEAL_ENTRY_OUT) continue;
+
+      // Check if deal was closed by Take Profit
+      ENUM_DEAL_REASON reason = (ENUM_DEAL_REASON)HistoryDealGetInteger(ticket, DEAL_REASON);
+      string comment = HistoryDealGetString(ticket, DEAL_COMMENT);
+
+      bool isTPHit = (reason == DEAL_REASON_TP) || (StringFind(comment, "tp") >= 0) || (StringFind(comment, "TP") >= 0);
+      if(!isTPHit) continue;
+
+      // Extract batchId from deal comment or position comment
+      int posBatchId = 0;
+      if(StringFind(comment, "B") == 0)
+      {
+         int underscoreIdx = StringFind(comment, "_");
+         if(underscoreIdx > 1)
+         {
+            string idStr = StringSubstr(comment, 1, underscoreIdx - 1);
+            posBatchId = (int)StringToInteger(idStr);
+         }
+      }
+
+      if(posBatchId <= 0) continue;
+
+      // Get channel object for this batch
+      SRoofFloorChannel batchChannel;
+      if(ExtRBRDBD.GetChannelByBatchId(PERIOD_M1, posBatchId, batchChannel))
+      {
+         ENUM_DEAL_TYPE dealType = (ENUM_DEAL_TYPE)HistoryDealGetInteger(ticket, DEAL_TYPE);
+         // Deal BUY means it closed a SELL position, Deal SELL means it closed a BUY position
+         bool isBuyPos  = (dealType == DEAL_TYPE_SELL);
+         bool isSellPos = (dealType == DEAL_TYPE_BUY);
+
+         if((isBuyPos && batchChannel.buyAreaUsedPct >= InpSmartTPThreshold) ||
+            (isSellPos && batchChannel.sellAreaUsedPct >= InpSmartTPThreshold))
+         {
+            CancelPendingOrdersByBatch(posBatchId, StringFormat("Standard TP Hit & Area >= %.1f%% Used", InpSmartTPThreshold));
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Cancel pending orders belonging to a specific batch              |
+//+------------------------------------------------------------------+
+void CancelPendingOrdersByBatch(const int batchId, const string reason)
+{
+   if(batchId <= 0) return;
+   string batchPrefix = StringFormat("B%d_", batchId);
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket <= 0) continue;
+      if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
+      if(OrderGetInteger(ORDER_MAGIC) != InpMagicNumber) continue;
+
+      string comment = OrderGetString(ORDER_COMMENT);
+      if(StringFind(comment, batchPrefix) == 0)
+      {
+         ExtTrade.OrderDelete(ticket);
+         PrintFormat("[Orders] Pending Order #%I64u (%s) cancelled. Reason: %s", ticket, comment, reason);
       }
    }
 }
