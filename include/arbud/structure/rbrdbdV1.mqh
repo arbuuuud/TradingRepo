@@ -59,31 +59,50 @@ struct SRBRDBDArea
 };
 
 //+------------------------------------------------------------------+
-//| Struct for Roof and Floor Range Channel                          |
+//| Struct for Roof and Floor Range Channel & Transaction Areas      |
 //+------------------------------------------------------------------+
 struct SRoofFloorChannel
 {
    bool              isValid;
-   double            roofPrice;        // Top border of DBD base (Distal of DBD)
-   double            floorPrice;       // Bottom border of RBR base (Distal of RBR)
-   double            medianPrice;      // (Roof + Floor) / 2
-   string            roofSource;       // "DBD", "SwingHigh (Fallback)", "ATH (Projected)"
-   string            floorSource;      // "RBR", "SwingLow (Fallback)", "ATL (Projected)"
+   double            roofPrice;        // 100% boundary (Roof / DBD)
+   double            floorPrice;       // 0% boundary (Floor / RBR)
+   double            rangeHeight;      // roofPrice - floorPrice
+
+   // Percentage Levels
+   double            levelStopTop;     // 130%
+   double            levelSellBoundary;// 75%
+   double            levelMedian;      // 50%
+   double            levelBuyBoundary; // 25%
+   double            levelStopBottom;  // -30%
+
+   // Area Consumption / Penetration
+   double            sellAreaUsedPct;  // 0.0% to 100.0% (penetration inside 75%-100%)
+   double            buyAreaUsedPct;   // 0.0% to 100.0% (penetration inside 0%-25%)
+
+   string            roofSource;       // "DBD", "Higher TF DBD", "Struct #2", etc.
+   string            floorSource;      // "RBR", "Higher TF RBR", "Struct #2", etc.
    datetime          startTime;        // Earliest relevant base start time
    datetime          endTime;          // Future projection time
    string            channelName;
 
    void Init()
    {
-      isValid     = false;
-      roofPrice   = 0.0;
-      floorPrice  = 0.0;
-      medianPrice = 0.0;
-      roofSource  = "";
-      floorSource = "";
-      startTime   = 0;
-      endTime     = 0;
-      channelName = "";
+      isValid           = false;
+      roofPrice         = 0.0;
+      floorPrice        = 0.0;
+      rangeHeight       = 0.0;
+      levelStopTop      = 0.0;
+      levelSellBoundary = 0.0;
+      levelMedian       = 0.0;
+      levelBuyBoundary  = 0.0;
+      levelStopBottom   = 0.0;
+      sellAreaUsedPct   = 0.0;
+      buyAreaUsedPct    = 0.0;
+      roofSource        = "";
+      floorSource       = "";
+      startTime         = 0;
+      endTime           = 0;
+      channelName       = "";
    }
 };
 
@@ -891,7 +910,7 @@ private:
       }
 
       // ====================================================================
-      // 3. VALIDASI AKHIR (PRIORITAS 5: JIKA TIDAK DITEMUKAN -> INVALID)
+      // 3. VALIDASI AKHIR & PENGECEKAN STOP AREA (ATURAN HAPUS)
       // ====================================================================
       if(roofPrice <= 0.0 || floorPrice <= 0.0 || roofPrice <= floorPrice)
       {
@@ -901,19 +920,81 @@ private:
          return; // Invalid channel!
       }
 
-      // Channel Valid
-      data.currentChannel.isValid     = true;
-      data.currentChannel.roofPrice   = roofPrice;
-      data.currentChannel.floorPrice  = floorPrice;
-      data.currentChannel.roofSource  = roofSource;
-      data.currentChannel.floorSource = floorSource;
+      double range = roofPrice - floorPrice;
+      double stopTop = roofPrice + (0.30 * range);      // 130%
+      double stopBottom = floorPrice - (0.30 * range);   // -30%
+
+      // ATURAN HAPUS: Hanya boleh terhapus kalau candle close di atas stop area (>130%)
+      // atau di bawah stop area (<-30%)
+      MqlRates lastRates[];
+      ArraySetAsSeries(lastRates, true);
+      if(CopyRates(symbol, data.tf, 1, 1, lastRates) >= 1)
+      {
+         if(lastRates[0].close >= stopTop || lastRates[0].close <= stopBottom)
+         {
+            PrintFormat("[TransactionArea] Channel %s invalidated by bar close outside Stop Area (Close: %.5f, Top130: %.5f, Bot-30: %.5f)",
+                        EnumToString(data.tf), lastRates[0].close, stopTop, stopBottom);
+            data.currentChannel.Init();
+            data.currentChannel.channelName = m_objPrefix + EnumToString(data.tf) + "_RoofFloor";
+            data.currentChannel.isValid = false;
+            return;
+         }
+      }
+
+      // ====================================================================
+      // 4. PEMBENTUKAN ZONA TRANSACTION AREA
+      // ====================================================================
+      data.currentChannel.isValid           = true;
+      data.currentChannel.roofPrice         = roofPrice;
+      data.currentChannel.floorPrice        = floorPrice;
+      data.currentChannel.rangeHeight       = range;
+      data.currentChannel.levelStopTop      = stopTop;
+      data.currentChannel.levelSellBoundary = floorPrice + (0.75 * range); // 75%
+      data.currentChannel.levelMedian       = floorPrice + (0.50 * range); // 50%
+      data.currentChannel.levelBuyBoundary  = floorPrice + (0.25 * range); // 25%
+      data.currentChannel.levelStopBottom   = stopBottom;
+      data.currentChannel.roofSource        = roofSource;
+      data.currentChannel.floorSource       = floorSource;
+
+      // Track consumption of Buy Area (0%-25%) & Sell Area (75%-100%)
+      double buyAreaHeight  = data.currentChannel.levelBuyBoundary - floorPrice;   // 25% of range
+      double sellAreaHeight = roofPrice - data.currentChannel.levelSellBoundary;  // 25% of range
+
+      // Check against current price or bar extremes
+      double currentBid = SymbolInfoDouble(symbol, SYMBOL_BID);
+      double currentAsk = SymbolInfoDouble(symbol, SYMBOL_ASK);
+      double lowCheck   = (currentBid > 0) ? currentBid : currentPrice;
+      double highCheck  = (currentAsk > 0) ? currentAsk : currentPrice;
+
+      if(ArraySize(lastRates) > 0)
+      {
+         if(lastRates[0].low < lowCheck)   lowCheck  = lastRates[0].low;
+         if(lastRates[0].high > highCheck) highCheck = lastRates[0].high;
+      }
+
+      // Buy Area Used: Price masuk dari level 25% turun mendekati floor (0%)
+      if(buyAreaHeight > 0.0 && lowCheck < data.currentChannel.levelBuyBoundary)
+      {
+         double penetration = data.currentChannel.levelBuyBoundary - lowCheck;
+         double pct = (penetration / buyAreaHeight) * 100.0;
+         if(pct > data.currentChannel.buyAreaUsedPct)
+            data.currentChannel.buyAreaUsedPct = MathMin(NormalizeDouble(pct, 1), 100.0);
+      }
+
+      // Sell Area Used: Price masuk dari level 75% naik mendekati roof (100%)
+      if(sellAreaHeight > 0.0 && highCheck > data.currentChannel.levelSellBoundary)
+      {
+         double penetration = highCheck - data.currentChannel.levelSellBoundary;
+         double pct = (penetration / sellAreaHeight) * 100.0;
+         if(pct > data.currentChannel.sellAreaUsedPct)
+            data.currentChannel.sellAreaUsedPct = MathMin(NormalizeDouble(pct, 1), 100.0);
+      }
 
       datetime tStart = (roofTime > 0 && floorTime > 0) ? MathMin(roofTime, floorTime) : MathMax(roofTime, floorTime);
       if(tStart == 0) tStart = TimeCurrent() - (PeriodSeconds(data.tf) * 20);
 
       data.currentChannel.startTime   = tStart;
       data.currentChannel.endTime     = TimeCurrent() + (PeriodSeconds(data.tf) * 15);
-      data.currentChannel.medianPrice = (roofPrice + floorPrice) / 2.0;
       data.currentChannel.channelName = m_objPrefix + EnumToString(data.tf) + "_RoofFloor";
    }
 
@@ -1062,89 +1143,135 @@ private:
    }
 
    //+------------------------------------------------------------------+
-   //| Draw Roof & Floor Visual Range Box & Lines                       |
+   //| Draw Transaction Areas (Stop, Sell, TP, Buy, Stop)               |
    //+------------------------------------------------------------------+
    void DrawRoofFloorChannel(STimeframeRBRDBDData &data)
    {
-      string baseName  = m_objPrefix + EnumToString(data.tf) + "_RoofFloor";
-      string boxName   = baseName + "_Box";
-      string roofLine  = baseName + "_RoofLine";
-      string floorLine = baseName + "_FloorLine";
-      string eqLine    = baseName + "_EqLine";
-      string labelName = baseName + "_Lbl";
+      string baseName  = m_objPrefix + EnumToString(data.tf) + "_TA";
+      
+      // Object names
+      string boxStopTop    = baseName + "_StopTop";     // 100% - 130%
+      string boxSellArea   = baseName + "_SellArea";    // 75% - 100%
+      string boxTPSell     = baseName + "_TPSell";      // 50% - 75%
+      string boxTPBuy      = baseName + "_TPBuy";       // 25% - 50%
+      string boxBuyArea    = baseName + "_BuyArea";     // 0% - 25%
+      string boxStopBottom = baseName + "_StopBottom";  // -30% - 0%
 
-      // If channel is invalid (either roof or floor not found), delete all channel objects!
+      string lineRoof      = baseName + "_LineRoof";    // 100%
+      string lineMedian    = baseName + "_LineMedian";  // 50%
+      string lineFloor     = baseName + "_LineFloor";   // 0%
+
+      string lblStatus     = baseName + "_LblStatus";
+      string lblSell       = baseName + "_LblSell";
+      string lblBuy        = baseName + "_LblBuy";
+
+      // If channel is invalid, delete all objects!
       if(!data.currentChannel.isValid)
       {
-         ObjectDelete(0, boxName);
-         ObjectDelete(0, roofLine);
-         ObjectDelete(0, floorLine);
-         ObjectDelete(0, eqLine);
-         ObjectDelete(0, labelName);
+         ObjectDelete(0, boxStopTop);
+         ObjectDelete(0, boxSellArea);
+         ObjectDelete(0, boxTPSell);
+         ObjectDelete(0, boxTPBuy);
+         ObjectDelete(0, boxBuyArea);
+         ObjectDelete(0, boxStopBottom);
+         ObjectDelete(0, lineRoof);
+         ObjectDelete(0, lineMedian);
+         ObjectDelete(0, lineFloor);
+         ObjectDelete(0, lblStatus);
+         ObjectDelete(0, lblSell);
+         ObjectDelete(0, lblBuy);
          return;
       }
 
       datetime tStart = data.currentChannel.startTime;
       datetime tEnd   = data.currentChannel.endTime;
-      double roofP    = data.currentChannel.roofPrice;
-      double floorP   = data.currentChannel.floorPrice;
-      double eqP      = data.currentChannel.medianPrice;
 
-      // 1. Draw Range Box
-      if(!ObjectCreate(0, boxName, OBJ_RECTANGLE, 0, tStart, roofP, tEnd, floorP))
-      {
-         ObjectMove(0, boxName, 0, tStart, roofP);
-         ObjectMove(0, boxName, 1, tEnd, floorP);
-      }
-      ObjectSetInteger(0, boxName, OBJPROP_COLOR, data.channelBgColor);
-      ObjectSetInteger(0, boxName, OBJPROP_FILL, true);
-      ObjectSetInteger(0, boxName, OBJPROP_BACK, true);
-      ObjectSetInteger(0, boxName, OBJPROP_SELECTABLE, false);
+      double p130 = data.currentChannel.levelStopTop;
+      double p100 = data.currentChannel.roofPrice;
+      double p75  = data.currentChannel.levelSellBoundary;
+      double p50  = data.currentChannel.levelMedian;
+      double p25  = data.currentChannel.levelBuyBoundary;
+      double p0   = data.currentChannel.floorPrice;
+      double pNeg30 = data.currentChannel.levelStopBottom;
 
-      // 2. Draw Roof Line (Top Border)
-      if(!ObjectCreate(0, roofLine, OBJ_TREND, 0, tStart, roofP, tEnd, roofP))
-      {
-         ObjectMove(0, roofLine, 0, tStart, roofP);
-         ObjectMove(0, roofLine, 1, tEnd, roofP);
-      }
-      ObjectSetInteger(0, roofLine, OBJPROP_COLOR, data.roofColor);
-      ObjectSetInteger(0, roofLine, OBJPROP_WIDTH, 2);
-      ObjectSetInteger(0, roofLine, OBJPROP_STYLE, STYLE_SOLID);
-      ObjectSetInteger(0, roofLine, OBJPROP_RAY_RIGHT, false);
+      // Color Palette for Areas
+      color clrStop   = C'45,20,25';      // Dark Reddish for Stop Area
+      color clrSell   = (data.currentChannel.sellAreaUsedPct >= 100.0) ? C'50,30,30' : C'60,20,20'; // Sell Area
+      color clrTPSell = C'35,35,20';      // Olive/Yellowish for TP Sell (50-75%)
+      color clrTPBuy  = C'20,35,35';      // Cyan/Tealish for TP Buy (25-50%)
+      color clrBuy    = (data.currentChannel.buyAreaUsedPct >= 100.0)  ? C'30,50,30' : C'20,60,20'; // Buy Area
 
-      // 3. Draw Floor Line (Bottom Border)
-      if(!ObjectCreate(0, floorLine, OBJ_TREND, 0, tStart, floorP, tEnd, floorP))
-      {
-         ObjectMove(0, floorLine, 0, tStart, floorP);
-         ObjectMove(0, floorLine, 1, tEnd, floorP);
-      }
-      ObjectSetInteger(0, floorLine, OBJPROP_COLOR, data.floorColor);
-      ObjectSetInteger(0, floorLine, OBJPROP_WIDTH, 2);
-      ObjectSetInteger(0, floorLine, OBJPROP_STYLE, STYLE_SOLID);
-      ObjectSetInteger(0, floorLine, OBJPROP_RAY_RIGHT, false);
+      // 1. Box: Stop Area Top (100% - 130%)
+      DrawBox(boxStopTop, tStart, p130, tEnd, p100, clrStop);
 
-      // 4. Draw Median Equilibrium (50%) Line
-      if(!ObjectCreate(0, eqLine, OBJ_TREND, 0, tStart, eqP, tEnd, eqP))
-      {
-         ObjectMove(0, eqLine, 0, tStart, eqP);
-         ObjectMove(0, eqLine, 1, tEnd, eqP);
-      }
-      ObjectSetInteger(0, eqLine, OBJPROP_COLOR, clrDarkGray);
-      ObjectSetInteger(0, eqLine, OBJPROP_WIDTH, 1);
-      ObjectSetInteger(0, eqLine, OBJPROP_STYLE, STYLE_DOT);
-      ObjectSetInteger(0, eqLine, OBJPROP_RAY_RIGHT, false);
+      // 2. Box: Sell Area (75% - 100%)
+      DrawBox(boxSellArea, tStart, p100, tEnd, p75, clrSell);
 
-      // 5. Draw Label Text on Top Right / Left
-      if(!ObjectCreate(0, labelName, OBJ_TEXT, 0, tStart, roofP))
+      // 3. Box: TP Area for Sell (50% - 75%)
+      DrawBox(boxTPSell, tStart, p75, tEnd, p50, clrTPSell);
+
+      // 4. Box: TP Area for Buy (25% - 50%)
+      DrawBox(boxTPBuy, tStart, p50, tEnd, p25, clrTPBuy);
+
+      // 5. Box: Buy Area (0% - 25%)
+      DrawBox(boxBuyArea, tStart, p25, tEnd, p0, clrBuy);
+
+      // 6. Box: Stop Area Bottom (-30% - 0%)
+      DrawBox(boxStopBottom, tStart, p0, tEnd, pNeg30, clrStop);
+
+      // Lines: Roof (100%), Median (50%), Floor (0%)
+      DrawLine(lineRoof, tStart, p100, tEnd, p100, data.roofColor, 2, STYLE_SOLID);
+      DrawLine(lineMedian, tStart, p50, tEnd, p50, clrDarkGray, 1, STYLE_DOT);
+      DrawLine(lineFloor, tStart, p0, tEnd, p0, data.floorColor, 2, STYLE_SOLID);
+
+      // Labels
+      string sellStatus = (data.currentChannel.sellAreaUsedPct >= 100.0) ? "[100% Used - No Trade]" : StringFormat("[%.1f%% Used - Active]", data.currentChannel.sellAreaUsedPct);
+      string buyStatus  = (data.currentChannel.buyAreaUsedPct >= 100.0)  ? "[100% Used - No Trade]" : StringFormat("[%.1f%% Used - Active]", data.currentChannel.buyAreaUsedPct);
+
+      DrawText(lblSell, tStart, p100, StringFormat(" SELL AREA (75-100%%) %s", sellStatus), clrLightCoral, 8);
+      DrawText(lblBuy,  tStart, p25,  StringFormat(" BUY AREA (0-25%%) %s", buyStatus), clrPaleGreen, 8);
+
+      string header = StringFormat(" [%s Transaction Area] Roof: %.5f (%s) | Floor: %.5f (%s)",
+                                   EnumToString(data.tf), p100, data.currentChannel.roofSource,
+                                   p0, data.currentChannel.floorSource);
+      DrawText(lblStatus, tStart, p130, header, clrWhiteSmoke, 9);
+   }
+
+   void DrawBox(const string name, const datetime t1, const double p1, const datetime t2, const double p2, const color clr)
+   {
+      if(!ObjectCreate(0, name, OBJ_RECTANGLE, 0, t1, p1, t2, p2))
       {
-         ObjectMove(0, labelName, 0, tStart, roofP);
+         ObjectMove(0, name, 0, t1, p1);
+         ObjectMove(0, name, 1, t2, p2);
       }
-      string txt = StringFormat(" [%s Range] Roof: %.5f (%s) | Floor: %.5f (%s) | Eq: %.5f",
-                                EnumToString(data.tf), roofP, data.currentChannel.roofSource,
-                                floorP, data.currentChannel.floorSource, eqP);
-      ObjectSetString(0, labelName, OBJPROP_TEXT, txt);
-      ObjectSetInteger(0, labelName, OBJPROP_COLOR, clrWhiteSmoke);
-      ObjectSetInteger(0, labelName, OBJPROP_FONTSIZE, 9);
-      ObjectSetString(0, labelName, OBJPROP_FONT, "Arial Bold");
+      ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, name, OBJPROP_FILL, true);
+      ObjectSetInteger(0, name, OBJPROP_BACK, true);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   }
+
+   void DrawLine(const string name, const datetime t1, const double p1, const datetime t2, const double p2, const color clr, const int width, const ENUM_LINE_STYLE style)
+   {
+      if(!ObjectCreate(0, name, OBJ_TREND, 0, t1, p1, t2, p2))
+      {
+         ObjectMove(0, name, 0, t1, p1);
+         ObjectMove(0, name, 1, t2, p2);
+      }
+      ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, name, OBJPROP_WIDTH, width);
+      ObjectSetInteger(0, name, OBJPROP_STYLE, style);
+      ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
+   }
+
+   void DrawText(const string name, const datetime t, const double p, const string text, const color clr, const int size)
+   {
+      if(!ObjectCreate(0, name, OBJ_TEXT, 0, t, p))
+      {
+         ObjectMove(0, name, 0, t, p);
+      }
+      ObjectSetString(0, name, OBJPROP_TEXT, text);
+      ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, name, OBJPROP_FONTSIZE, size);
+      ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
    }
 };

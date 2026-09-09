@@ -6,7 +6,7 @@
 #property copyright   "TradingRepo"
 #property link        "https://github.com/arbuuuud/TradingRepo"
 #property version     "1.00"
-#property description "arbudlogicv1: Multi-Timeframe Structure & RBR/DBD Roof-Floor EA (Main TF: M1)"
+#property description "arbudlogicv1: Main TF M1 - Structure M1, RBR/DBD M1, and Transaction Areas"
 
 //+------------------------------------------------------------------+
 //| Modular Includes                                                 |
@@ -20,22 +20,25 @@
 input group "=== General Settings ==="
 input int               InpHistoryBars       = 500;             // History Bars to Scan on Init
 
-input group "=== Structure Visual Settings (Only M3 Drawn) ==="
-input color             InpColorStructM3     = clrDodgerBlue;   // M3 Structure Line Color
-input int               InpWidthStructM3     = 2;               // M3 Structure Line Width
+input group "=== M1 Structure Settings ==="
+input bool              InpEnableStructM1    = true;            // Enable M1 Structure Detection
+input bool              InpDrawStructM1      = true;            // Draw M1 Structure on Chart
+input color             InpColorStructM1     = clrDodgerBlue;   // M1 Structure Line Color
+input int               InpWidthStructM1     = 1;               // M1 Structure Line Width
 
-input group "=== Roof & Floor Channel Colors ==="
-input color             InpColorRoofM1       = clrLightPink;    // M1 Roof Line Color
-input color             InpColorFloorM1      = clrLightGreen;   // M1 Floor Line Color
+input group "=== M1 RBR / DBD Settings ==="
+input bool              InpEnableRbrDbdM1    = true;            // Enable M1 RBR/DBD Detection
+input bool              InpDrawRbrDbdM1      = true;            // Draw M1 RBR/DBD Rectangles on Chart
+input bool              InpDrawRoofFloorM1   = true;            // Draw M1 Transaction Areas (Floor/Roof)
+input int               InpMinBaseM1         = 1;               // M1 Min Base Candles (1~9)
+input int               InpMaxBaseM1         = 5;               // M1 Max Base Candles (1~9)
+input double            InpLegRatioM1        = 1.0;             // M1 Min Leg-Out vs Base Ratio
 
-input color             InpColorRoofM3       = clrSalmon;       // M3 Roof Line Color
-input color             InpColorFloorM3      = clrMediumSeaGreen; // M3 Floor Line Color
-
-input color             InpColorRoofM15      = clrIndianRed;    // M15 Roof Line Color
-input color             InpColorFloorM15     = clrSeaGreen;     // M15 Floor Line Color
-
-input color             InpColorRoofH1       = clrFireBrick;    // H1 Roof Line Color
-input color             InpColorFloorH1      = clrDarkGreen;    // H1 Floor Line Color
+input group "=== Visual Colors ==="
+input color             InpColorRBR          = clrMediumSeaGreen; // Fresh RBR (Demand)
+input color             InpColorDBD          = clrCrimson;        // Fresh DBD (Supply)
+input color             InpColorRoof         = clrIndianRed;      // 100% Roof Border
+input color             InpColorFloor        = clrLimeGreen;      // 0% Floor Border
 
 //+------------------------------------------------------------------+
 //| Global Component Objects                                         |
@@ -51,27 +54,24 @@ int OnInit()
    Print("=== [arbudlogicv1] Initializing EA (Main TF: M1) ===");
 
    // ----------------------------------------------------------------
-   // 1. Structure Registration (M1, M3, M15, H1)
-   // Hanya M3 yang digambar di chart (drawOnChart = true)
+   // 1. Structure Registration (M1 - Active & Drawn, M3/M15/H1 background for fallback)
    // ----------------------------------------------------------------
-   ExtStructure.RegisterTimeframe(PERIOD_M1,  clrWhiteSmoke,    1, false); // M1: hitung saja, jangan gambar
-   ExtStructure.RegisterTimeframe(PERIOD_M3,  InpColorStructM3, InpWidthStructM3, true); // M3: DIGAMBAR
-   ExtStructure.RegisterTimeframe(PERIOD_M15, clrGold,          1, false); // M15: hitung saja, jangan gambar
-   ExtStructure.RegisterTimeframe(PERIOD_H1,  clrOrange,        1, false); // H1: hitung saja, jangan gambar
+   ExtStructure.RegisterTimeframe(PERIOD_M1,  InpColorStructM1, InpWidthStructM1, InpDrawStructM1);
+   ExtStructure.RegisterTimeframe(PERIOD_M3,  clrDodgerBlue,    1, false);
+   ExtStructure.RegisterTimeframe(PERIOD_M15, clrGold,          1, false);
+   ExtStructure.RegisterTimeframe(PERIOD_H1,  clrOrange,        1, false);
 
    // ----------------------------------------------------------------
-   // 2. RBR / DBD Registration (M1, M3, M15, H1)
-   // drawOnChart = false (jangan gambar individual RBR/DBD rect)
-   // drawRoofFloor = true (hanya gambar Roof & Floor channel)
+   // 2. RBR / DBD Registration (M1 - Active & Drawn, M3/M15/H1 background for fallback)
    // ----------------------------------------------------------------
-   // M1
-   ExtRBRDBD.RegisterTimeframe(PERIOD_M1,  1, 5, 1.0, false, true, clrSeaGreen, clrIndianRed, InpColorRoofM1,  InpColorFloorM1);
-   // M3
-   ExtRBRDBD.RegisterTimeframe(PERIOD_M3,  1, 5, 1.0, false, true, clrSeaGreen, clrIndianRed, InpColorRoofM3,  InpColorFloorM3);
-   // M15
-   ExtRBRDBD.RegisterTimeframe(PERIOD_M15, 1, 7, 1.0, false, true, clrSeaGreen, clrIndianRed, InpColorRoofM15, InpColorFloorM15);
-   // H1
-   ExtRBRDBD.RegisterTimeframe(PERIOD_H1,  1, 7, 1.0, false, true, clrSeaGreen, clrIndianRed, InpColorRoofH1,  InpColorFloorH1);
+   // M1: Draw RBR/DBD boxes + Draw Transaction Area Roof/Floor
+   ExtRBRDBD.RegisterTimeframe(PERIOD_M1,  InpMinBaseM1, InpMaxBaseM1, InpLegRatioM1, 
+                               InpDrawRbrDbdM1, InpDrawRoofFloorM1, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
+
+   // M3, M15, H1: Calculated in background for fallback hierarchy
+   ExtRBRDBD.RegisterTimeframe(PERIOD_M3,  1, 5, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
+   ExtRBRDBD.RegisterTimeframe(PERIOD_M15, 1, 7, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
+   ExtRBRDBD.RegisterTimeframe(PERIOD_H1,  1, 7, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
 
    // ----------------------------------------------------------------
    // 3. Scan History on Init
@@ -79,13 +79,10 @@ int OnInit()
    ExtStructure.InitHistory(_Symbol, InpHistoryBars);
    ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars, &ExtStructure);
 
-   PrintFormat("[arbudlogicv1] Init Succeeded on %s. Main TF: M1.", _Symbol);
-   PrintFormat("Structure: M1(%d), M3(%d - drawn), M15(%d), H1(%d)",
+   PrintFormat("[arbudlogicv1] Init Succeeded on %s (Main TF: M1).", _Symbol);
+   PrintFormat("Structure M1: %d swings | RBR/DBD M1: %d zones.",
                ExtStructure.GetStructuresCount(PERIOD_M1),
-               ExtStructure.GetStructuresCount(PERIOD_M3),
-               ExtStructure.GetStructuresCount(PERIOD_M15),
-               ExtStructure.GetStructuresCount(PERIOD_H1));
-   PrintFormat("Roof-Floor Channels: M1, M3, M15, H1 active.");
+               ExtRBRDBD.GetValidAreasCount(PERIOD_M1));
 
    return INIT_SUCCEEDED;
 }
@@ -110,7 +107,7 @@ void OnTick()
    ExtStructure.UpdateOnCandleClose(_Symbol);
    ExtRBRDBD.UpdateOnCandleClose(_Symbol, &ExtStructure);
 
-   // 2. Real-time consumption & Roof-Floor update on tick
+   // 2. Real-time consumption & Transaction Area update on tick
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    ExtRBRDBD.UpdateConsumptionOnTick(_Symbol, bid, ask, &ExtStructure);
