@@ -73,7 +73,11 @@ struct SRoofFloorChannel
    // Percentage Levels
    double            levelStopTop;     // 130%
    double            levelSellBoundary;// 75%
+   double            levelSmartTPSell; // 76%
+   double            levelTPSell;      // 55%
    double            levelMedian;      // 50%
+   double            levelTPBuy;       // 45%
+   double            levelSmartTPBuy;  // 24%
    double            levelBuyBoundary; // 25%
    double            levelStopBottom;  // -30%
 
@@ -97,7 +101,11 @@ struct SRoofFloorChannel
       rangeHeight       = 0.0;
       levelStopTop      = 0.0;
       levelSellBoundary = 0.0;
+      levelSmartTPSell  = 0.0;
+      levelTPSell       = 0.0;
       levelMedian       = 0.0;
+      levelTPBuy        = 0.0;
+      levelSmartTPBuy   = 0.0;
       levelBuyBoundary  = 0.0;
       levelStopBottom   = 0.0;
       sellAreaUsedPct   = 0.0;
@@ -1018,7 +1026,11 @@ private:
       data.currentChannel.rangeHeight       = range;
       data.currentChannel.levelStopTop      = stopTop;
       data.currentChannel.levelSellBoundary = floorPrice + (0.75 * range); // 75%
+      data.currentChannel.levelSmartTPSell  = floorPrice + (0.76 * range); // 76%
+      data.currentChannel.levelTPSell       = floorPrice + (0.55 * range); // 55%
       data.currentChannel.levelMedian       = floorPrice + (0.50 * range); // 50%
+      data.currentChannel.levelTPBuy        = floorPrice + (0.45 * range); // 45%
+      data.currentChannel.levelSmartTPBuy   = floorPrice + (0.24 * range); // 24%
       data.currentChannel.levelBuyBoundary  = floorPrice + (0.25 * range); // 25%
       data.currentChannel.levelStopBottom   = stopBottom;
       data.currentChannel.roofSource        = roofSource;

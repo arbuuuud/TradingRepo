@@ -204,7 +204,7 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
       double step = (buyAreaTop - buyAreaBot) / (InpMaxEntry - 1);
 
       double slPrice = NormalizeDouble(channel.levelStopBottom, digits); // -30%
-      double tpPrice = NormalizeDouble(channel.levelMedian, digits);     // 50%
+      double tpPrice = NormalizeDouble(channel.levelTPBuy, digits);      // 45% (Buy TP)
 
       for(int i = 0; i < InpMaxEntry; i++)
       {
@@ -239,7 +239,7 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
       double step = (sellAreaTop - sellAreaBot) / (InpMaxEntry - 1);
 
       double slPrice = NormalizeDouble(channel.levelStopTop, digits);    // 130%
-      double tpPrice = NormalizeDouble(channel.levelMedian, digits);     // 50%
+      double tpPrice = NormalizeDouble(channel.levelTPSell, digits);     // 55% (Sell TP)
 
       for(int i = 0; i < InpMaxEntry; i++)
       {
@@ -308,13 +308,13 @@ void ManageSmartTP(const string symbol, const SRoofFloorChannel &currentChannel,
       }
 
       // --- Smart TP for BUY ---
-      // Jika Buy Area pernah kemakan >= 75%, dan harga sudah naik menyentuh pintu masuk TP Area Buy (Level 25%)
+      // Jika Buy Area pernah kemakan >= 75%, dan harga sudah naik menyentuh level Smart TP Buy (Level 24%)
       if(posType == POSITION_TYPE_BUY && targetChannel.buyAreaUsedPct >= InpSmartTPThreshold)
       {
-         if(bid >= targetChannel.levelBuyBoundary)
+         if(bid >= targetChannel.levelSmartTPBuy)
          {
-            PrintFormat("[SmartTP] BUY #%I64u (%s) closed at %.5f (Batch %d was %.1f%% used, reached 25%% TP Level %.5f)",
-                        ticket, posComment, bid, targetChannel.batchId, targetChannel.buyAreaUsedPct, targetChannel.levelBuyBoundary);
+            PrintFormat("[SmartTP] BUY #%I64u (%s) closed at %.5f (Batch %d was %.1f%% used, reached 24%% Smart TP Level %.5f)",
+                        ticket, posComment, bid, targetChannel.batchId, targetChannel.buyAreaUsedPct, targetChannel.levelSmartTPBuy);
             if(ExtTrade.PositionClose(ticket))
             {
                // Hapus sisa limit order jika batch sudah TP dan area >= 75% used
@@ -323,13 +323,13 @@ void ManageSmartTP(const string symbol, const SRoofFloorChannel &currentChannel,
          }
       }
       // --- Smart TP for SELL ---
-      // Jika Sell Area pernah kemakan >= 75%, dan harga sudah turun menyentuh pintu masuk TP Area Sell (Level 75%)
+      // Jika Sell Area pernah kemakan >= 75%, dan harga sudah turun menyentuh level Smart TP Sell (Level 76%)
       else if(posType == POSITION_TYPE_SELL && targetChannel.sellAreaUsedPct >= InpSmartTPThreshold)
       {
-         if(ask <= targetChannel.levelSellBoundary)
+         if(ask <= targetChannel.levelSmartTPSell)
          {
-            PrintFormat("[SmartTP] SELL #%I64u (%s) closed at %.5f (Batch %d was %.1f%% used, reached 75%% TP Level %.5f)",
-                        ticket, posComment, ask, targetChannel.batchId, targetChannel.sellAreaUsedPct, targetChannel.levelSellBoundary);
+            PrintFormat("[SmartTP] SELL #%I64u (%s) closed at %.5f (Batch %d was %.1f%% used, reached 76%% Smart TP Level %.5f)",
+                        ticket, posComment, ask, targetChannel.batchId, targetChannel.sellAreaUsedPct, targetChannel.levelSmartTPSell);
             if(ExtTrade.PositionClose(ticket))
             {
                // Hapus sisa limit order jika batch sudah TP dan area >= 75% used
