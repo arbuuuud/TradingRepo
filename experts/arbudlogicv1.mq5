@@ -252,11 +252,13 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
       // Jika M3 Bullish Control -> Hanya boleh BUY di Floor/Demand
       if(m3Trend == STR_TREND_BULL)
       {
+         if(allowSell) PrintFormat("[PAC Grid Debug] Sell Limit blocked by M3 Trend BULL (Only BUY allowed)");
          allowSell = false;
       }
       // Jika M3 Bearish Control -> Hanya boleh SELL di Roof/Supply
       else if(m3Trend == STR_TREND_BEAR)
       {
+         if(allowBuy) PrintFormat("[PAC Grid Debug] Buy Limit blocked by M3 Trend BEAR (Only SELL allowed)");
          allowBuy = false;
       }
    }
@@ -274,14 +276,16 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
       hasEq = CalculateM3Equilibrium(symbol, InpM3Lookback, eqM3, highM3, lowM3);
       if(hasEq)
       {
-         // Buy Area Boundary (25% channel) harus di bawah Equilibrium M3 (Discount Zone)
-         if(channel.levelBuyBoundary > eqM3)
+         // Floor Price (0% channel) harus di bawah Equilibrium M3 (Discount Zone)
+         if(channel.floorPrice > eqM3)
          {
+            if(allowBuy) PrintFormat("[PAC Grid Debug] Buy Limit blocked: Floor (%.5f) is above M3 Equilibrium (%.5f) - Not in Discount", channel.floorPrice, eqM3);
             allowBuy = false;
          }
-         // Sell Area Boundary (75% channel) harus di atas Equilibrium M3 (Premium Zone)
-         if(channel.levelSellBoundary < eqM3)
+         // Roof Price (100% channel) harus di atas Equilibrium M3 (Premium Zone)
+         if(channel.roofPrice < eqM3)
          {
+            if(allowSell) PrintFormat("[PAC Grid Debug] Sell Limit blocked: Roof (%.5f) is below M3 Equilibrium (%.5f) - Not in Premium", channel.roofPrice, eqM3);
             allowSell = false;
          }
       }
@@ -338,6 +342,7 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
          double slPrice = NormalizeDouble(slPriceRaw, digits);
          double tpPrice = NormalizeDouble(channel.levelTPBuy, digits); // 45% (Buy TP)
 
+         int placedCount = 0;
          for(int i = 0; i < InpMaxEntry; i++)
          {
             double gridPrice = NormalizeDouble(buyAreaTop - (i * step), digits);
@@ -358,10 +363,16 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
             string comment = StringFormat("B%d_BL%d", channel.batchId, i);
             if(ExtTrade.BuyLimit(InpStaticLot, gridPrice, symbol, slPrice, tpPrice, ORDER_TIME_GTC, 0, comment))
             {
+               placedCount++;
                PrintFormat("[PAC Grid] Placed Buy Limit #%d at %.5f (SL: %.5f, TP: %.5f, Trend: %d, Batch: %s)", 
                            i, gridPrice, slPrice, tpPrice, m3Trend, channel.batchCode);
                AddPlacedPrice(gridPrice, g_placedBuyPrices);
             }
+         }
+         if(placedCount == 0 && ArraySize(g_placedBuyPrices) == 0)
+         {
+            PrintFormat("[PAC Grid Debug] No Buy Limit placed in Buy Area: CurAsk=%.5f, AreaTop=%.5f, BreachedDepth=%.5f, Used=%.1f%%",
+                        curAsk, buyAreaTop, breachedBuyDepth, channel.buyAreaUsedPct);
          }
       }
    }
@@ -392,6 +403,7 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
          double slPrice = NormalizeDouble(slPriceRaw, digits);
          double tpPrice = NormalizeDouble(channel.levelTPSell, digits); // 55% (Sell TP)
 
+         int placedCount = 0;
          for(int i = 0; i < InpMaxEntry; i++)
          {
             double gridPrice = NormalizeDouble(sellAreaBot + (i * step), digits);
@@ -412,10 +424,16 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
             string comment = StringFormat("B%d_SL%d", channel.batchId, i);
             if(ExtTrade.SellLimit(InpStaticLot, gridPrice, symbol, slPrice, tpPrice, ORDER_TIME_GTC, 0, comment))
             {
+               placedCount++;
                PrintFormat("[PAC Grid] Placed Sell Limit #%d at %.5f (SL: %.5f, TP: %.5f, Trend: %d, Batch: %s)", 
                            i, gridPrice, slPrice, tpPrice, m3Trend, channel.batchCode);
                AddPlacedPrice(gridPrice, g_placedSellPrices);
             }
+         }
+         if(placedCount == 0 && ArraySize(g_placedSellPrices) == 0)
+         {
+            PrintFormat("[PAC Grid Debug] No Sell Limit placed in Sell Area: CurBid=%.5f, AreaBot=%.5f, BreachedDepth=%.5f, Used=%.1f%%",
+                        curBid, sellAreaBot, breachedSellDepth, channel.sellAreaUsedPct);
          }
       }
    }
