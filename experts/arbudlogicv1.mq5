@@ -25,7 +25,7 @@ input int               InpHistoryBars       = 500;             // History Bars 
 
 input group "=== Grid Entry Settings ==="
 input double            InpStaticLot         = 0.01;            // Static Order Volume
-input int               InpMaxEntry          = 2;               // Max Grid Entry Points per Area (PAC Recommended: 1-2)
+input int               InpMaxEntry          = 5;               // Max Grid Entry Points per Area (Default: 5)
 input bool              InpEnableBuyLimit    = true;            // Enable Buy Limit Grid in Buy Area (0-25%)
 input bool              InpEnableSellLimit   = true;            // Enable Sell Limit Grid in Sell Area (75-100%)
 input bool              InpFilterByControlTrend = true;         // PAC: Filter Entry by M3 Structure Trend (Bull=Buy only, Bear=Sell only)
