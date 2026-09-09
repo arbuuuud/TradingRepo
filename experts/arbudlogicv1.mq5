@@ -29,16 +29,17 @@ input int               InpMaxEntry          = 5;               // Max Grid Entr
 input bool              InpEnableBuyLimit    = true;            // Enable Buy Limit Grid in Buy Area (0-25%)
 input bool              InpEnableSellLimit   = true;            // Enable Sell Limit Grid in Sell Area (75-100%)
 input bool              InpFilterByControlTrend = true;         // PAC: Filter Entry by M3 Structure Trend (Bull=Buy only, Bear=Sell only)
-input double            InpSLBufferPercent   = 5.0;             // PAC: SL Buffer % outside Floor/Roof (e.g. 5% = -5% / 105% vs old -30%/130%)
+input double            InpHardSLPercent     = 30.0;            // Hard SL % from total area outside Floor/Roof (e.g. 30% = -30% / 130%)
 
 input group "=== Smart TP & Exit Settings ==="
 input bool              InpEnableSmartTP     = true;            // Enable Early TP Exit when Area Used >= 75%
 input double            InpSmartTPThreshold  = 75.0;            // Threshold % to trigger Smart TP & Cancel Grid (Default 75%)
 input int               InpDefaultSpreadPoints = 35;            // Default Spread Points for Smart TP buffer (Min profit = 2x spread)
 
-input group "=== Anti-Fake Wick & Breakeven Settings ==="
-input bool              InpUseCandleCloseSL  = true;            // Cutloss only on Candle Close outside Area (Anti-Fake Wick)
-input double            InpHardDisasterSLPct = 25.0;            // Emergency Disaster Hard SL % outside Floor/Roof (e.g. -25% / 125%)
+input group "=== Candle Close SL & Breakeven Settings ==="
+input bool              InpUseCandleCloseSL  = true;            // Cutloss on M1 Candle Close in 15%-30% outer zone
+input double            InpCloseZoneMinPct   = 15.0;            // Min % outside Floor/Roof for M1 Close SL (Default: 15%)
+input double            InpCloseZoneMaxPct   = 30.0;            // Max % outside Floor/Roof for M1 Close SL (Default: 30%)
 input bool              InpEnableBreakeven   = true;            // Enable Smart Breakeven (BE)
 input int               InpBETriggerPoints   = 40;              // Min Floating Profit in Points to trigger BE (Default: 40)
 input int               InpBELockPoints      = 5;               // Points locked above/below entry for BE (Default: 5)
@@ -244,11 +245,8 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
       double buyAreaBot = channel.floorPrice;       // 0%
       double step = (InpMaxEntry > 1) ? (buyAreaTop - buyAreaBot) / (InpMaxEntry - 1) : 0.0;
 
-      // SL Calculation:
-      // Jika InpUseCandleCloseSL aktif, hard SL di broker dipasang di Disaster Buffer (InpHardDisasterSLPct)
-      // agar tidak tersentuh fake wick. Penutupan riil dikontrol oleh Candle Close M1 di bawah Floor.
-      double bufferPct = InpUseCandleCloseSL ? InpHardDisasterSLPct : InpSLBufferPercent;
-      double slPriceRaw = channel.floorPrice - (range * (bufferPct / 100.0));
+      // Hard SL Calculation (30% dari total area / range di luar Floor)
+      double slPriceRaw = channel.floorPrice - (range * (InpHardSLPercent / 100.0));
       double slPrice = NormalizeDouble(slPriceRaw, digits);
       double tpPrice = NormalizeDouble(channel.levelTPBuy, digits); // 45% (Buy TP)
 
@@ -284,11 +282,8 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
       double sellAreaTop = channel.roofPrice;         // 100%
       double step = (InpMaxEntry > 1) ? (sellAreaTop - sellAreaBot) / (InpMaxEntry - 1) : 0.0;
 
-      // SL Calculation:
-      // Jika InpUseCandleCloseSL aktif, hard SL di broker dipasang di Disaster Buffer (InpHardDisasterSLPct)
-      // agar tidak tersentuh fake wick. Penutupan riil dikontrol oleh Candle Close M1 di atas Roof.
-      double bufferPct = InpUseCandleCloseSL ? InpHardDisasterSLPct : InpSLBufferPercent;
-      double slPriceRaw = channel.roofPrice + (range * (bufferPct / 100.0));
+      // Hard SL Calculation (30% dari total area / range di luar Roof)
+      double slPriceRaw = channel.roofPrice + (range * (InpHardSLPercent / 100.0));
       double slPrice = NormalizeDouble(slPriceRaw, digits);
       double tpPrice = NormalizeDouble(channel.levelTPSell, digits); // 55% (Sell TP)
 
@@ -528,7 +523,7 @@ void ManageSmartTP(const string symbol, const SRoofFloorChannel &currentChannel,
 }
 
 //+------------------------------------------------------------------+
-//| Anti-Fake Wick: Close positions on Candle Close outside Area     |
+//| Anti-Fake Wick: Close positions on Candle Close in 15%-30% Zone  |
 //+------------------------------------------------------------------+
 void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentChannel)
 {
@@ -571,26 +566,38 @@ void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentCha
       if(!found)
          targetChannel = currentChannel;
 
-      // BUY Invalidation: Candle Close 1 berada di bawah Floor
+      double range = targetChannel.roofPrice - targetChannel.floorPrice;
+
+      // BUY Invalidation: Candle Close 1 berada di zona luar 15% - 30% di bawah Floor
+      // Level 15% luar: floorPrice - (0.15 * range)
+      // Level 30% luar: floorPrice - (0.30 * range)
       if(posType == POSITION_TYPE_BUY)
       {
-         if(close1 < targetChannel.floorPrice)
+         double buyCloseZoneTop = targetChannel.floorPrice - (range * (InpCloseZoneMinPct / 100.0));
+         double buyCloseZoneBot = targetChannel.floorPrice - (range * (InpCloseZoneMaxPct / 100.0));
+
+         if(close1 <= buyCloseZoneTop && close1 >= buyCloseZoneBot)
          {
-            PrintFormat("[Anti-Wick SL] BUY #%I64u (%s) closed! M1 Close[1] %.5f < Floor %.5f (Batch %d)",
-                        ticket, posComment, close1, targetChannel.floorPrice, targetChannel.batchId);
+            PrintFormat("[CandleClose SL] BUY #%I64u (%s) closed! M1 Close[1] %.5f is in 15%%-30%% outer zone (%.5f - %.5f) [Batch %d]",
+                        ticket, posComment, close1, buyCloseZoneTop, buyCloseZoneBot, targetChannel.batchId);
             ExtTrade.PositionClose(ticket);
-            CancelPendingOrdersByBatch(targetChannel.batchId, "Candle Close Broken Floor (SL)");
+            CancelPendingOrdersByBatch(targetChannel.batchId, "M1 Candle Closed in 15%-30% Outer Zone (SL)");
          }
       }
-      // SELL Invalidation: Candle Close 1 berada di atas Roof
+      // SELL Invalidation: Candle Close 1 berada di zona luar 15% - 30% di atas Roof
+      // Level 15% luar: roofPrice + (0.15 * range)
+      // Level 30% luar: roofPrice + (0.30 * range)
       else if(posType == POSITION_TYPE_SELL)
       {
-         if(close1 > targetChannel.roofPrice)
+         double sellCloseZoneBot = targetChannel.roofPrice + (range * (InpCloseZoneMinPct / 100.0));
+         double sellCloseZoneTop = targetChannel.roofPrice + (range * (InpCloseZoneMaxPct / 100.0));
+
+         if(close1 >= sellCloseZoneBot && close1 <= sellCloseZoneTop)
          {
-            PrintFormat("[Anti-Wick SL] SELL #%I64u (%s) closed! M1 Close[1] %.5f > Roof %.5f (Batch %d)",
-                        ticket, posComment, close1, targetChannel.roofPrice, targetChannel.batchId);
+            PrintFormat("[CandleClose SL] SELL #%I64u (%s) closed! M1 Close[1] %.5f is in 15%%-30%% outer zone (%.5f - %.5f) [Batch %d]",
+                        ticket, posComment, close1, sellCloseZoneBot, sellCloseZoneTop, targetChannel.batchId);
             ExtTrade.PositionClose(ticket);
-            CancelPendingOrdersByBatch(targetChannel.batchId, "Candle Close Broken Roof (SL)");
+            CancelPendingOrdersByBatch(targetChannel.batchId, "M1 Candle Closed in 15%-30% Outer Zone (SL)");
          }
       }
    }
