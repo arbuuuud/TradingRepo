@@ -36,6 +36,13 @@ input bool              InpEnableSmartTP     = true;            // Enable Early 
 input double            InpSmartTPThreshold  = 75.0;            // Threshold % to trigger Smart TP & Cancel Grid (Default 75%)
 input int               InpDefaultSpreadPoints = 35;            // Default Spread Points for Smart TP buffer (Min profit = 2x spread)
 
+input group "=== Anti-Fake Wick & Breakeven Settings ==="
+input bool              InpUseCandleCloseSL  = true;            // Cutloss only on Candle Close outside Area (Anti-Fake Wick)
+input double            InpHardDisasterSLPct = 25.0;            // Emergency Disaster Hard SL % outside Floor/Roof (e.g. -25% / 125%)
+input bool              InpEnableBreakeven   = true;            // Enable Smart Breakeven (BE)
+input int               InpBETriggerPoints   = 40;              // Min Floating Profit in Points to trigger BE (Default: 40)
+input int               InpBELockPoints      = 5;               // Points locked above/below entry for BE (Default: 5)
+
 input group "=== M1 Structure Settings ==="
 input bool              InpEnableStructM1    = true;            // Enable M1 Structure Detection
 input bool              InpDrawStructM1      = true;            // Draw M1 Structure on Chart
@@ -68,12 +75,15 @@ double g_placedBuyPrices[];
 double g_placedSellPrices[];
 double g_lastChannelRoof  = 0.0;
 double g_lastChannelFloor = 0.0;
+datetime g_lastM1BarTime  = 0;
 
 //+------------------------------------------------------------------+
 //| Forward Declarations                                             |
 //+------------------------------------------------------------------+
 void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel);
 void ManageSmartTP(const string symbol, const SRoofFloorChannel &channel, const double bid, const double ask);
+void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentChannel);
+void ManageBreakeven(const string symbol);
 void CloseAllPositionsAndOrders(const string symbol, const string reason);
 void CancelAllPendingOrders(const string symbol, const string reason);
 void CancelPendingOrdersByBatch(const int batchId, const string reason);
@@ -164,13 +174,19 @@ void OnTick()
    // 4. Manage Grid Limit Orders (Buy Limit in Buy Area, Sell Limit in Sell Area)
    ManageGridOrders(_Symbol, channel);
 
-   // 5. Smart TP Check (Early exit if area was consumed >= 75%)
+   // 5. Anti-Fake Wick: Evaluate Cutloss on completed Candle Close outside Floor/Roof
+   CheckCandleCloseSL(_Symbol, channel);
+
+   // 6. Smart Breakeven: Protect floating profits
+   ManageBreakeven(_Symbol);
+
+   // 7. Smart TP Check (Early exit if area was consumed >= 75%)
    if(InpEnableSmartTP)
    {
       ManageSmartTP(_Symbol, channel, bid, ask);
    }
 
-   // 6. Check Standard TP Deal Closures: if batch already hit TP & area >= 75% used -> cancel remaining pending orders
+   // 8. Check Standard TP Deal Closures: if batch already hit TP & area >= 75% used -> cancel remaining pending orders
    CheckStandardTPClosedOrders();
 }
 
@@ -228,8 +244,11 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
       double buyAreaBot = channel.floorPrice;       // 0%
       double step = (InpMaxEntry > 1) ? (buyAreaTop - buyAreaBot) / (InpMaxEntry - 1) : 0.0;
 
-      // PAC Tight SL: Diletakkan sedikit di bawah Floor (default: 5% dari range di bawah floorPrice)
-      double slPriceRaw = channel.floorPrice - (range * (InpSLBufferPercent / 100.0));
+      // SL Calculation:
+      // Jika InpUseCandleCloseSL aktif, hard SL di broker dipasang di Disaster Buffer (InpHardDisasterSLPct)
+      // agar tidak tersentuh fake wick. Penutupan riil dikontrol oleh Candle Close M1 di bawah Floor.
+      double bufferPct = InpUseCandleCloseSL ? InpHardDisasterSLPct : InpSLBufferPercent;
+      double slPriceRaw = channel.floorPrice - (range * (bufferPct / 100.0));
       double slPrice = NormalizeDouble(slPriceRaw, digits);
       double tpPrice = NormalizeDouble(channel.levelTPBuy, digits); // 45% (Buy TP)
 
@@ -265,8 +284,11 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
       double sellAreaTop = channel.roofPrice;         // 100%
       double step = (InpMaxEntry > 1) ? (sellAreaTop - sellAreaBot) / (InpMaxEntry - 1) : 0.0;
 
-      // PAC Tight SL: Diletakkan sedikit di atas Roof (default: 5% dari range di atas roofPrice)
-      double slPriceRaw = channel.roofPrice + (range * (InpSLBufferPercent / 100.0));
+      // SL Calculation:
+      // Jika InpUseCandleCloseSL aktif, hard SL di broker dipasang di Disaster Buffer (InpHardDisasterSLPct)
+      // agar tidak tersentuh fake wick. Penutupan riil dikontrol oleh Candle Close M1 di atas Roof.
+      double bufferPct = InpUseCandleCloseSL ? InpHardDisasterSLPct : InpSLBufferPercent;
+      double slPriceRaw = channel.roofPrice + (range * (bufferPct / 100.0));
       double slPrice = NormalizeDouble(slPriceRaw, digits);
       double tpPrice = NormalizeDouble(channel.levelTPSell, digits); // 55% (Sell TP)
 
@@ -499,6 +521,134 @@ void ManageSmartTP(const string symbol, const SRoofFloorChannel &currentChannel,
             {
                // Hapus sisa limit order jika batch sudah TP dan area >= 75% used
                CancelPendingOrdersByBatch(targetChannel.batchId, StringFormat("Smart TP Triggered & Area >= %.1f%% Used", InpSmartTPThreshold));
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Anti-Fake Wick: Close positions on Candle Close outside Area     |
+//+------------------------------------------------------------------+
+void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentChannel)
+{
+   if(!InpUseCandleCloseSL) return;
+
+   // Check if a new M1 candle just opened (meaning bar 1 just completed its close)
+   datetime curM1Time = iTime(symbol, PERIOD_M1, 0);
+   if(curM1Time == 0 || curM1Time == g_lastM1BarTime) return;
+   g_lastM1BarTime = curM1Time;
+
+   double close1 = iClose(symbol, PERIOD_M1, 1);
+   if(close1 <= 0.0) return;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      string posComment = PositionGetString(POSITION_COMMENT);
+
+      // Extract batchId from comment
+      int posBatchId = 0;
+      if(StringFind(posComment, "B") == 0)
+      {
+         int underscoreIdx = StringFind(posComment, "_");
+         if(underscoreIdx > 1)
+         {
+            string idStr = StringSubstr(posComment, 1, underscoreIdx - 1);
+            posBatchId = (int)StringToInteger(idStr);
+         }
+      }
+
+      SRoofFloorChannel targetChannel;
+      bool found = false;
+      if(posBatchId > 0)
+         found = ExtRBRDBD.GetChannelByBatchId(PERIOD_M1, posBatchId, targetChannel);
+      if(!found)
+         targetChannel = currentChannel;
+
+      // BUY Invalidation: Candle Close 1 berada di bawah Floor
+      if(posType == POSITION_TYPE_BUY)
+      {
+         if(close1 < targetChannel.floorPrice)
+         {
+            PrintFormat("[Anti-Wick SL] BUY #%I64u (%s) closed! M1 Close[1] %.5f < Floor %.5f (Batch %d)",
+                        ticket, posComment, close1, targetChannel.floorPrice, targetChannel.batchId);
+            ExtTrade.PositionClose(ticket);
+            CancelPendingOrdersByBatch(targetChannel.batchId, "Candle Close Broken Floor (SL)");
+         }
+      }
+      // SELL Invalidation: Candle Close 1 berada di atas Roof
+      else if(posType == POSITION_TYPE_SELL)
+      {
+         if(close1 > targetChannel.roofPrice)
+         {
+            PrintFormat("[Anti-Wick SL] SELL #%I64u (%s) closed! M1 Close[1] %.5f > Roof %.5f (Batch %d)",
+                        ticket, posComment, close1, targetChannel.roofPrice, targetChannel.batchId);
+            ExtTrade.PositionClose(ticket);
+            CancelPendingOrdersByBatch(targetChannel.batchId, "Candle Close Broken Roof (SL)");
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Smart Breakeven: Move SL to Entry + Lock Points when in Profit   |
+//+------------------------------------------------------------------+
+void ManageBreakeven(const string symbol)
+{
+   if(!InpEnableBreakeven) return;
+
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   double curBid = SymbolInfoDouble(symbol, SYMBOL_BID);
+   double curAsk = SymbolInfoDouble(symbol, SYMBOL_ASK);
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double currentSL = PositionGetDouble(POSITION_SL);
+      double currentTP = PositionGetDouble(POSITION_TP);
+
+      // --- BUY POSITION BREAKEVEN ---
+      if(posType == POSITION_TYPE_BUY)
+      {
+         double profitPoints = (curBid - openPrice) / point;
+         double newSL = NormalizeDouble(openPrice + (InpBELockPoints * point), digits);
+
+         // Jika floating profit sudah mencapai trigger dan SL belum dipindahkan ke BE
+         if(profitPoints >= InpBETriggerPoints && (currentSL < newSL || currentSL == 0.0))
+         {
+            if(ExtTrade.PositionModify(ticket, newSL, currentTP))
+            {
+               PrintFormat("[Breakeven] BUY #%I64u modified to BE! Open: %.5f, New SL: %.5f (Lock %d pts, Profit: %.1f pts)",
+                           ticket, openPrice, newSL, InpBELockPoints, profitPoints);
+            }
+         }
+      }
+      // --- SELL POSITION BREAKEVEN ---
+      else if(posType == POSITION_TYPE_SELL)
+      {
+         double profitPoints = (openPrice - curAsk) / point;
+         double newSL = NormalizeDouble(openPrice - (InpBELockPoints * point), digits);
+
+         // Jika floating profit sudah mencapai trigger dan SL belum dipindahkan ke BE
+         if(profitPoints >= InpBETriggerPoints && (currentSL > newSL || currentSL == 0.0))
+         {
+            if(ExtTrade.PositionModify(ticket, newSL, currentTP))
+            {
+               PrintFormat("[Breakeven] SELL #%I64u modified to BE! Open: %.5f, New SL: %.5f (Lock %d pts, Profit: %.1f pts)",
+                           ticket, openPrice, newSL, InpBELockPoints, profitPoints);
             }
          }
       }
