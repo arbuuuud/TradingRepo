@@ -29,7 +29,7 @@ input int               InpMaxEntry          = 10;              // Max Grid Entr
 input bool              InpEnableBuyLimit    = true;            // Enable Buy Limit Grid in Buy Area (0-25%)
 input bool              InpEnableSellLimit   = true;            // Enable Sell Limit Grid in Sell Area (75-100%)
 input bool              InpFilterByControlTrend = true;         // PAC: Filter Entry by M3 Structure Trend (Bull=Buy only, Bear=Sell only)
-input bool              InpRequireRbrDbdSource = true;          // Only Buy Limit if Floor=RBR & Sell Limit if Roof=DBD
+input bool              InpRequireM3RbrDbdOnly = true;          // Only Buy Limit if Floor=M3 RBR & Sell Limit if Roof=M3 DBD
 input double            InpHardSLPercent     = 30.0;            // Hard SL % from total area outside Floor/Roof (e.g. 30% = -30% / 130%)
 
 input group "=== Smart TP & Exit Settings ==="
@@ -282,17 +282,17 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
    }
 
    // ---------------------------------------------------------------
-   // Filter Sumber Zona: Hanya Buy jika Floor=RBR, Hanya Sell jika Roof=DBD
+   // Filter Sumber Zona: Hanya Buy jika Floor=M3 RBR, Hanya Sell jika Roof=M3 DBD
    // ---------------------------------------------------------------
-   if(InpRequireRbrDbdSource)
+   if(InpRequireM3RbrDbdOnly)
    {
-      // Buy Limit hanya valid jika Floor berasal dari zona RBR (Demand)
-      if(StringFind(channel.floorSource, "RBR") < 0)
+      // Buy Limit hanya valid jika Floor berasal murni dari zona RBR di timeframe M3
+      if(StringFind(channel.floorSource, "M3") < 0 || StringFind(channel.floorSource, "RBR") < 0 || StringFind(channel.floorSource, "Higher TF") >= 0)
       {
          allowBuy = false;
       }
-      // Sell Limit hanya valid jika Roof berasal dari zona DBD (Supply)
-      if(StringFind(channel.roofSource, "DBD") < 0)
+      // Sell Limit hanya valid jika Roof berasal murni dari zona DBD di timeframe M3
+      if(StringFind(channel.roofSource, "M3") < 0 || StringFind(channel.roofSource, "DBD") < 0 || StringFind(channel.roofSource, "Higher TF") >= 0)
       {
          allowSell = false;
       }
