@@ -279,11 +279,11 @@ public:
             {
                double curPrice = SymbolInfoDouble(symbol, SYMBOL_BID);
 
-               // Rule: Hanya daftarkan/buat Floor-Roof baru jika ada Structure Baru di M15
+               // Rule: Hanya daftarkan/buat Floor-Roof baru jika ada Structure Baru di M3
                bool allowNewChannel = true;
                if(structureEngine != NULL)
                {
-                  allowNewChannel = structureEngine.HasNewStructure(PERIOD_M15);
+                  allowNewChannel = structureEngine.HasNewStructure(PERIOD_M3);
                }
 
                if(allowNewChannel || !m_tfList[i].currentChannel.isValid)
