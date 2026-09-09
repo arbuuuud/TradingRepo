@@ -685,11 +685,19 @@ bool CalculateM3Equilibrium(const string symbol, const int lookback, double &out
 //+------------------------------------------------------------------+
 //| Check closed deals: If TP hit & Area >= 75% -> Cancel Pending   |
 //+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//| Check closed deals: If positions already hit TP & open positions|
+//| are now clean (0 open pos) -> Cancel remaining pending orders    |
+//+------------------------------------------------------------------+
 void CheckStandardTPClosedOrders()
 {
    // Query history of today / recent deals
    datetime fromTime = TimeCurrent() - (PeriodSeconds(PERIOD_D1));
    if(!HistorySelect(fromTime, TimeCurrent())) return;
+
+   // 1. Identifikasi batch yang pernah mencetak Take Profit
+   int tpBatchIds[];
+   ArrayResize(tpBatchIds, 0);
 
    int totalDeals = HistoryDealsTotal();
    for(int i = totalDeals - 1; i >= 0; i--)
@@ -710,7 +718,7 @@ void CheckStandardTPClosedOrders()
       bool isTPHit = (reason == DEAL_REASON_TP) || (StringFind(comment, "tp") >= 0) || (StringFind(comment, "TP") >= 0);
       if(!isTPHit) continue;
 
-      // Extract batchId from deal comment or position comment
+      // Extract batchId from deal comment
       int posBatchId = 0;
       if(StringFind(comment, "B") == 0)
       {
@@ -722,22 +730,67 @@ void CheckStandardTPClosedOrders()
          }
       }
 
-      if(posBatchId <= 0) continue;
-
-      // Get channel object for this batch
-      SRoofFloorChannel batchChannel;
-      if(ExtRBRDBD.GetChannelByBatchId(PERIOD_M3, posBatchId, batchChannel))
+      if(posBatchId > 0)
       {
-         ENUM_DEAL_TYPE dealType = (ENUM_DEAL_TYPE)HistoryDealGetInteger(ticket, DEAL_TYPE);
-         // Deal BUY means it closed a SELL position, Deal SELL means it closed a BUY position
-         bool isBuyPos  = (dealType == DEAL_TYPE_SELL);
-         bool isSellPos = (dealType == DEAL_TYPE_BUY);
-
-         if((isBuyPos && batchChannel.buyAreaUsedPct >= InpSmartTPThreshold) ||
-            (isSellPos && batchChannel.sellAreaUsedPct >= InpSmartTPThreshold))
+         bool exists = false;
+         for(int b = 0; b < ArraySize(tpBatchIds); b++)
          {
-            CancelPendingOrdersByBatch(posBatchId, StringFormat("Standard TP Hit & Area >= %.1f%% Used", InpSmartTPThreshold));
+            if(tpBatchIds[b] == posBatchId) { exists = true; break; }
          }
+         if(!exists)
+         {
+            int sz = ArraySize(tpBatchIds);
+            ArrayResize(tpBatchIds, sz + 1);
+            tpBatchIds[sz] = posBatchId;
+         }
+      }
+   }
+
+   // 2. Untuk setiap batch yang sudah pernah TP:
+   //    Jika open position sudah bersih (0 posisi terbuka), batalkan semua sisa pending limit ordernya!
+   for(int b = 0; b < ArraySize(tpBatchIds); b++)
+   {
+      int bId = tpBatchIds[b];
+      string batchPrefix = StringFormat("B%d_", bId);
+
+      // Hitung jumlah open position yang masih aktif untuk batch ini
+      int activePosCount = 0;
+      for(int i = 0; i < PositionsTotal(); i++)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket <= 0) continue;
+         if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+         if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+         string posComment = PositionGetString(POSITION_COMMENT);
+         if(StringFind(posComment, batchPrefix) == 0)
+         {
+            activePosCount++;
+         }
+      }
+
+      // Hitung jumlah pending limit order yang masih aktif untuk batch ini
+      int pendingOrderCount = 0;
+      for(int i = 0; i < OrdersTotal(); i++)
+      {
+         ulong ticket = OrderGetTicket(i);
+         if(ticket <= 0) continue;
+         if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
+         if(OrderGetInteger(ORDER_MAGIC) != InpMagicNumber) continue;
+
+         string ordComment = OrderGetString(ORDER_COMMENT);
+         if(StringFind(ordComment, batchPrefix) == 0)
+         {
+            pendingOrderCount++;
+         }
+      }
+
+      // Aturan: Jika sudah ada posisi TP, posisi terbuka sudah 0 (bersih), dan masih ada pending order tersisa -> HAPUS!
+      if(activePosCount == 0 && pendingOrderCount > 0)
+      {
+         PrintFormat("[Cleanup] Batch B%d hit TP and all positions closed (0 active). Cancelling %d remaining pending limit orders!",
+                     bId, pendingOrderCount);
+         CancelPendingOrdersByBatch(bId, "Batch hit TP and all open positions closed");
       }
    }
 }
