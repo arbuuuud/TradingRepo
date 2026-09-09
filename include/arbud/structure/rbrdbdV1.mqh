@@ -89,6 +89,8 @@ struct SRoofFloorChannel
    string            floorSource;      // "RBR", "Higher TF RBR", "Struct #2", etc.
    datetime          roofTime;         // Base candle start time of Roof
    datetime          floorTime;        // Base candle start time of Floor
+   datetime          roofLegOutTime;   // Leg-Out candle time of Roof
+   datetime          floorLegOutTime;  // Leg-Out candle time of Floor
    datetime          startTime;        // Earliest relevant base start time
    datetime          endTime;          // Future projection time
    string            channelName;
@@ -116,6 +118,8 @@ struct SRoofFloorChannel
       floorSource       = "";
       roofTime          = 0;
       floorTime         = 0;
+      roofLegOutTime    = 0;
+      floorLegOutTime   = 0;
       startTime         = 0;
       endTime           = 0;
       channelName       = "";
@@ -798,12 +802,14 @@ private:
       double roofPrice = 0.0;
       string roofSource = "";
       datetime roofTime = 0;
+      datetime roofLegOutTime = 0;
 
       // --- Prioritas 1: DBD terdekat di TF yang sama (di atas harga) ---
       if(currentTFIndex >= 0)
       {
          double nearestDBD = DBL_MAX;
          datetime nTime = 0;
+         datetime lTime = 0;
          for(int a = 0; a < ArraySize(m_tfList[currentTFIndex].areas); a++)
          {
             if(m_tfList[currentTFIndex].areas[a].isInvalid) continue;
@@ -817,14 +823,16 @@ private:
                {
                   nearestDBD = top;
                   nTime      = m_tfList[currentTFIndex].areas[a].baseStart;
+                  lTime      = m_tfList[currentTFIndex].areas[a].legOutTime;
                }
             }
          }
          if(nearestDBD < DBL_MAX)
          {
-            roofPrice  = nearestDBD;
-            roofSource = EnumToString(data.tf) + " DBD";
-            roofTime   = nTime;
+            roofPrice      = nearestDBD;
+            roofSource     = EnumToString(data.tf) + " DBD";
+            roofTime       = nTime;
+            roofLegOutTime = lTime;
          }
       }
 
@@ -833,6 +841,7 @@ private:
       {
          double nearestDBD = DBL_MAX;
          datetime nTime = 0;
+         datetime lTime = 0;
          for(int a = 0; a < ArraySize(m_tfList[higherTFIndex].areas); a++)
          {
             if(m_tfList[higherTFIndex].areas[a].isInvalid) continue;
@@ -846,14 +855,16 @@ private:
                {
                   nearestDBD = top;
                   nTime      = m_tfList[higherTFIndex].areas[a].baseStart;
+                  lTime      = m_tfList[higherTFIndex].areas[a].legOutTime;
                }
             }
          }
          if(nearestDBD < DBL_MAX)
          {
-            roofPrice  = nearestDBD;
-            roofSource = EnumToString(higherTF) + " DBD (Higher TF)";
-            roofTime   = nTime;
+            roofPrice      = nearestDBD;
+            roofSource     = EnumToString(higherTF) + " DBD (Higher TF)";
+            roofTime       = nTime;
+            roofLegOutTime = lTime;
          }
       }
 
@@ -891,12 +902,14 @@ private:
       double floorPrice = 0.0;
       string floorSource = "";
       datetime floorTime = 0;
+      datetime floorLegOutTime = 0;
 
       // --- Prioritas 1: RBR terdekat di TF yang sama (di bawah harga) ---
       if(currentTFIndex >= 0)
       {
          double nearestRBR = 0.0;
          datetime nTime = 0;
+         datetime lTime = 0;
          for(int a = 0; a < ArraySize(m_tfList[currentTFIndex].areas); a++)
          {
             if(m_tfList[currentTFIndex].areas[a].isInvalid) continue;
@@ -910,14 +923,16 @@ private:
                {
                   nearestRBR = bottom;
                   nTime      = m_tfList[currentTFIndex].areas[a].baseStart;
+                  lTime      = m_tfList[currentTFIndex].areas[a].legOutTime;
                }
             }
          }
          if(nearestRBR > 0.0)
          {
-            floorPrice  = nearestRBR;
-            floorSource = EnumToString(data.tf) + " RBR";
-            floorTime   = nTime;
+            floorPrice      = nearestRBR;
+            floorSource     = EnumToString(data.tf) + " RBR";
+            floorTime       = nTime;
+            floorLegOutTime = lTime;
          }
       }
 
@@ -926,6 +941,7 @@ private:
       {
          double nearestRBR = 0.0;
          datetime nTime = 0;
+         datetime lTime = 0;
          for(int a = 0; a < ArraySize(m_tfList[higherTFIndex].areas); a++)
          {
             if(m_tfList[higherTFIndex].areas[a].isInvalid) continue;
@@ -939,14 +955,16 @@ private:
                {
                   nearestRBR = bottom;
                   nTime      = m_tfList[higherTFIndex].areas[a].baseStart;
+                  lTime      = m_tfList[higherTFIndex].areas[a].legOutTime;
                }
             }
          }
          if(nearestRBR > 0.0)
          {
-            floorPrice  = nearestRBR;
-            floorSource = EnumToString(higherTF) + " RBR (Higher TF)";
-            floorTime   = nTime;
+            floorPrice      = nearestRBR;
+            floorSource     = EnumToString(higherTF) + " RBR (Higher TF)";
+            floorTime       = nTime;
+            floorLegOutTime = lTime;
          }
       }
 
@@ -1053,32 +1071,38 @@ private:
       data.currentChannel.floorSource       = floorSource;
       data.currentChannel.roofTime          = roofTime;
       data.currentChannel.floorTime         = floorTime;
+      data.currentChannel.roofLegOutTime    = roofLegOutTime;
+      data.currentChannel.floorLegOutTime   = floorLegOutTime;
 
       // Track consumption of Buy Area (0%-25%) & Sell Area (75%-100%)
       double buyAreaHeight  = data.currentChannel.levelBuyBoundary - floorPrice;   // 25% of range
       double sellAreaHeight = roofPrice - data.currentChannel.levelSellBoundary;  // 25% of range
 
       // --------------------------------------------------------------------
-      // Retroactive Check: Hitung konsumsi sejak Base terbentuk s/d sekarang
+      // Retroactive Check: Hitung konsumsi HANYA PADA BAR SETELAH Leg-Out terbentuk
+      // (Wick & body lilin base / leg-out TIDAK BOLEH dianggap sebagai penetrasi!)
       // --------------------------------------------------------------------
       double retroLowestLow   = DBL_MAX;
       double retroHighestHigh = 0.0;
 
-      datetime earliestTime = (roofTime > 0 && floorTime > 0) ? MathMin(roofTime, floorTime) : MathMax(roofTime, floorTime);
-      if(earliestTime > 0)
+      datetime earliestLegOut = 0;
+      if(floorLegOutTime > 0 && roofLegOutTime > 0) earliestLegOut = MathMin(floorLegOutTime, roofLegOutTime);
+      else earliestLegOut = MathMax(floorLegOutTime, roofLegOutTime);
+
+      if(earliestLegOut > 0)
       {
          MqlRates historyRates[];
          ArraySetAsSeries(historyRates, true);
-         int barsCopied = CopyRates(symbol, data.tf, earliestTime, TimeCurrent(), historyRates);
+         int barsCopied = CopyRates(symbol, data.tf, earliestLegOut, TimeCurrent(), historyRates);
          for(int b = 0; b < barsCopied; b++)
          {
-            // Pengecekan riwayat harga untuk Floor (Buy Area)
-            if(floorTime > 0 && historyRates[b].time >= floorTime)
+            // Pengecekan riwayat harga untuk Floor (Buy Area) hanya pada bar SETELAH leg-out selesai
+            if(floorLegOutTime > 0 && historyRates[b].time > floorLegOutTime)
             {
                if(historyRates[b].low < retroLowestLow) retroLowestLow = historyRates[b].low;
             }
-            // Pengecekan riwayat harga untuk Roof (Sell Area)
-            if(roofTime > 0 && historyRates[b].time >= roofTime)
+            // Pengecekan riwayat harga untuk Roof (Sell Area) hanya pada bar SETELAH leg-out selesai
+            if(roofLegOutTime > 0 && historyRates[b].time > roofLegOutTime)
             {
                if(historyRates[b].high > retroHighestHigh) retroHighestHigh = historyRates[b].high;
             }
@@ -1097,22 +1121,22 @@ private:
          if(lastRates[0].high > highCheck) highCheck = lastRates[0].high;
       }
 
-      if(retroLowestLow < lowCheck)   lowCheck  = retroLowestLow;
-      if(retroHighestHigh > highCheck) highCheck = retroHighestHigh;
+      double buyLowCheck   = (retroLowestLow < DBL_MAX && retroLowestLow < lowCheck) ? retroLowestLow : lowCheck;
+      double sellHighCheck = (retroHighestHigh > 0.0 && retroHighestHigh > highCheck) ? retroHighestHigh : highCheck;
 
       // Buy Area Used: Price masuk dari level 25% turun mendekati floor (0%)
-      if(buyAreaHeight > 0.0 && lowCheck < data.currentChannel.levelBuyBoundary)
+      if(buyAreaHeight > 0.0 && buyLowCheck < data.currentChannel.levelBuyBoundary)
       {
-         double penetration = data.currentChannel.levelBuyBoundary - lowCheck;
+         double penetration = data.currentChannel.levelBuyBoundary - buyLowCheck;
          double pct = (penetration / buyAreaHeight) * 100.0;
          if(pct > data.currentChannel.buyAreaUsedPct)
             data.currentChannel.buyAreaUsedPct = MathMin(NormalizeDouble(pct, 1), 100.0);
       }
 
       // Sell Area Used: Price masuk dari level 75% naik mendekati roof (100%)
-      if(sellAreaHeight > 0.0 && highCheck > data.currentChannel.levelSellBoundary)
+      if(sellAreaHeight > 0.0 && sellHighCheck > data.currentChannel.levelSellBoundary)
       {
-         double penetration = highCheck - data.currentChannel.levelSellBoundary;
+         double penetration = sellHighCheck - data.currentChannel.levelSellBoundary;
          double pct = (penetration / sellAreaHeight) * 100.0;
          if(pct > data.currentChannel.sellAreaUsedPct)
             data.currentChannel.sellAreaUsedPct = MathMin(NormalizeDouble(pct, 1), 100.0);

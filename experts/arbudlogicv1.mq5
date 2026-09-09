@@ -295,11 +295,13 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
       // Buy Limit hanya valid jika Floor berasal murni dari zona RBR di timeframe M3
       if(StringFind(channel.floorSource, "M3") < 0 || StringFind(channel.floorSource, "RBR") < 0 || StringFind(channel.floorSource, "Higher TF") >= 0)
       {
+         if(allowBuy) PrintFormat("[PAC Grid Debug] Buy Limit blocked: Floor is not M3 RBR (FloorSource: %s)", channel.floorSource);
          allowBuy = false;
       }
       // Sell Limit hanya valid jika Roof berasal murni dari zona DBD di timeframe M3
       if(StringFind(channel.roofSource, "M3") < 0 || StringFind(channel.roofSource, "DBD") < 0 || StringFind(channel.roofSource, "Higher TF") >= 0)
       {
+         if(allowSell) PrintFormat("[PAC Grid Debug] Sell Limit blocked: Roof is not M3 DBD (RoofSource: %s)", channel.roofSource);
          allowSell = false;
       }
    }
@@ -314,44 +316,52 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
    // A. BUY LIMIT GRID IN BUY AREA (0% - 25%)
    // ---------------------------------------------------------------
    // Syarat: Buy diizinkan dan Buy Area belum exhausted (< 75% used)
-   if(allowBuy && channel.buyAreaUsedPct < InpSmartTPThreshold)
+   if(allowBuy)
    {
-      double buyAreaTop = channel.levelBuyBoundary; // 25%
-      double buyAreaBot = channel.floorPrice;       // 0%
-      double step = (InpMaxEntry > 1) ? (buyAreaTop - buyAreaBot) / (InpMaxEntry - 1) : 0.0;
-
-      // Batas penetrasi harga yang sudah ditembus (breached depth)
-      // Level harga di atas atau sama dengan batas penetrasi ini SUDAH PERNAH DILEWATI/TERPAKAI!
-      double breachedBuyDepth = buyAreaTop - ((channel.buyAreaUsedPct / 100.0) * (buyAreaTop - buyAreaBot));
-
-      // Hard SL Calculation (30% dari total area / range di luar Floor)
-      double slPriceRaw = channel.floorPrice - (range * (InpHardSLPercent / 100.0));
-      double slPrice = NormalizeDouble(slPriceRaw, digits);
-      double tpPrice = NormalizeDouble(channel.levelTPBuy, digits); // 45% (Buy TP)
-
-      for(int i = 0; i < InpMaxEntry; i++)
+      if(channel.buyAreaUsedPct >= InpSmartTPThreshold)
       {
-         double gridPrice = NormalizeDouble(buyAreaTop - (i * step), digits);
+         PrintFormat("[PAC Grid Debug] Buy Limit blocked: Buy Area Used (%.1f%%) >= Threshold (%.1f%%)", 
+                     channel.buyAreaUsedPct, InpSmartTPThreshold);
+      }
+      else
+      {
+         double buyAreaTop = channel.levelBuyBoundary; // 25%
+         double buyAreaBot = channel.floorPrice;       // 0%
+         double step = (InpMaxEntry > 1) ? (buyAreaTop - buyAreaBot) / (InpMaxEntry - 1) : 0.0;
 
-         // Aturan 1: Hanya pasang jika belum pernah dipasang di titik ini
-         if(IsPriceAlreadyOrdered(gridPrice, g_placedBuyPrices, tol))
-            continue;
+         // Batas penetrasi harga yang sudah ditembus (breached depth)
+         // Level harga di atas atau sama dengan batas penetrasi ini SUDAH PERNAH DILEWATI/TERPAKAI!
+         double breachedBuyDepth = buyAreaTop - ((channel.buyAreaUsedPct / 100.0) * (buyAreaTop - buyAreaBot));
 
-         // Aturan 2: Price saat ini harus masih berada DI ATAS gridPrice (Buy Limit valid)
-         if(curAsk <= gridPrice)
-            continue;
+         // Hard SL Calculation (30% dari total area / range di luar Floor)
+         double slPriceRaw = channel.floorPrice - (range * (InpHardSLPercent / 100.0));
+         double slPrice = NormalizeDouble(slPriceRaw, digits);
+         double tpPrice = NormalizeDouble(channel.levelTPBuy, digits); // 45% (Buy TP)
 
-         // Aturan 3 (Anti-Reorder Breached Area):
-         // Jangan pasang jika titik grid ini sudah berada di dalam zona yang pernah ditembus (breached)
-         if(channel.buyAreaUsedPct > 0.0 && gridPrice >= (breachedBuyDepth - tol))
-            continue; // Level ini sudah pernah ditembus/dipakai, DILARANG order lagi!
-
-         string comment = StringFormat("B%d_BL%d", channel.batchId, i);
-         if(ExtTrade.BuyLimit(InpStaticLot, gridPrice, symbol, slPrice, tpPrice, ORDER_TIME_GTC, 0, comment))
+         for(int i = 0; i < InpMaxEntry; i++)
          {
-            PrintFormat("[PAC Grid] Placed Buy Limit #%d at %.5f (SL: %.5f, TP: %.5f, Trend: %d, Batch: %s)", 
-                        i, gridPrice, slPrice, tpPrice, m3Trend, channel.batchCode);
-            AddPlacedPrice(gridPrice, g_placedBuyPrices);
+            double gridPrice = NormalizeDouble(buyAreaTop - (i * step), digits);
+
+            // Aturan 1: Hanya pasang jika belum pernah dipasang di titik ini
+            if(IsPriceAlreadyOrdered(gridPrice, g_placedBuyPrices, tol))
+               continue;
+
+            // Aturan 2: Price saat ini harus masih berada DI ATAS gridPrice (Buy Limit valid)
+            if(curAsk <= gridPrice)
+               continue;
+
+            // Aturan 3 (Anti-Reorder Breached Area):
+            // Jangan pasang jika titik grid ini sudah berada di dalam zona yang pernah ditembus (breached)
+            if(channel.buyAreaUsedPct > 0.0 && gridPrice >= (breachedBuyDepth - tol))
+               continue; // Level ini sudah pernah ditembus/dipakai, DILARANG order lagi!
+
+            string comment = StringFormat("B%d_BL%d", channel.batchId, i);
+            if(ExtTrade.BuyLimit(InpStaticLot, gridPrice, symbol, slPrice, tpPrice, ORDER_TIME_GTC, 0, comment))
+            {
+               PrintFormat("[PAC Grid] Placed Buy Limit #%d at %.5f (SL: %.5f, TP: %.5f, Trend: %d, Batch: %s)", 
+                           i, gridPrice, slPrice, tpPrice, m3Trend, channel.batchCode);
+               AddPlacedPrice(gridPrice, g_placedBuyPrices);
+            }
          }
       }
    }
@@ -360,44 +370,52 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
    // B. SELL LIMIT GRID IN SELL AREA (75% - 100%)
    // ---------------------------------------------------------------
    // Syarat: Sell diizinkan dan Sell Area belum exhausted (< 75% used)
-   if(allowSell && channel.sellAreaUsedPct < InpSmartTPThreshold)
+   if(allowSell)
    {
-      double sellAreaBot = channel.levelSellBoundary; // 75%
-      double sellAreaTop = channel.roofPrice;         // 100%
-      double step = (InpMaxEntry > 1) ? (sellAreaTop - sellAreaBot) / (InpMaxEntry - 1) : 0.0;
-
-      // Batas penetrasi harga yang sudah ditembus (breached depth)
-      // Level harga di bawah atau sama dengan batas penetrasi ini SUDAH PERNAH DILEWATI/TERPAKAI!
-      double breachedSellDepth = sellAreaBot + ((channel.sellAreaUsedPct / 100.0) * (sellAreaTop - sellAreaBot));
-
-      // Hard SL Calculation (30% dari total area / range di luar Roof)
-      double slPriceRaw = channel.roofPrice + (range * (InpHardSLPercent / 100.0));
-      double slPrice = NormalizeDouble(slPriceRaw, digits);
-      double tpPrice = NormalizeDouble(channel.levelTPSell, digits); // 55% (Sell TP)
-
-      for(int i = 0; i < InpMaxEntry; i++)
+      if(channel.sellAreaUsedPct >= InpSmartTPThreshold)
       {
-         double gridPrice = NormalizeDouble(sellAreaBot + (i * step), digits);
+         PrintFormat("[PAC Grid Debug] Sell Limit blocked: Sell Area Used (%.1f%%) >= Threshold (%.1f%%)", 
+                     channel.sellAreaUsedPct, InpSmartTPThreshold);
+      }
+      else
+      {
+         double sellAreaBot = channel.levelSellBoundary; // 75%
+         double sellAreaTop = channel.roofPrice;         // 100%
+         double step = (InpMaxEntry > 1) ? (sellAreaTop - sellAreaBot) / (InpMaxEntry - 1) : 0.0;
 
-         // Aturan 1: Hanya pasang jika belum pernah dipasang di titik ini
-         if(IsPriceAlreadyOrdered(gridPrice, g_placedSellPrices, tol))
-            continue;
+         // Batas penetrasi harga yang sudah ditembus (breached depth)
+         // Level harga di bawah atau sama dengan batas penetrasi ini SUDAH PERNAH DILEWATI/TERPAKAI!
+         double breachedSellDepth = sellAreaBot + ((channel.sellAreaUsedPct / 100.0) * (sellAreaTop - sellAreaBot));
 
-         // Aturan 2: Price saat ini harus masih berada DI BAWAH gridPrice (Sell Limit valid)
-         if(curBid >= gridPrice)
-            continue;
+         // Hard SL Calculation (30% dari total area / range di luar Roof)
+         double slPriceRaw = channel.roofPrice + (range * (InpHardSLPercent / 100.0));
+         double slPrice = NormalizeDouble(slPriceRaw, digits);
+         double tpPrice = NormalizeDouble(channel.levelTPSell, digits); // 55% (Sell TP)
 
-         // Aturan 3 (Anti-Reorder Breached Area):
-         // Jangan pasang jika titik grid ini sudah berada di dalam zona yang pernah ditembus (breached)
-         if(channel.sellAreaUsedPct > 0.0 && gridPrice <= (breachedSellDepth + tol))
-            continue; // Level ini sudah pernah ditembus/dipakai, DILARANG order lagi!
-
-         string comment = StringFormat("B%d_SL%d", channel.batchId, i);
-         if(ExtTrade.SellLimit(InpStaticLot, gridPrice, symbol, slPrice, tpPrice, ORDER_TIME_GTC, 0, comment))
+         for(int i = 0; i < InpMaxEntry; i++)
          {
-            PrintFormat("[PAC Grid] Placed Sell Limit #%d at %.5f (SL: %.5f, TP: %.5f, Trend: %d, Batch: %s)", 
-                        i, gridPrice, slPrice, tpPrice, m3Trend, channel.batchCode);
-            AddPlacedPrice(gridPrice, g_placedSellPrices);
+            double gridPrice = NormalizeDouble(sellAreaBot + (i * step), digits);
+
+            // Aturan 1: Hanya pasang jika belum pernah dipasang di titik ini
+            if(IsPriceAlreadyOrdered(gridPrice, g_placedSellPrices, tol))
+               continue;
+
+            // Aturan 2: Price saat ini harus masih berada DI BAWAH gridPrice (Sell Limit valid)
+            if(curBid >= gridPrice)
+               continue;
+
+            // Aturan 3 (Anti-Reorder Breached Area):
+            // Jangan pasang jika titik grid ini sudah berada di dalam zona yang pernah ditembus (breached)
+            if(channel.sellAreaUsedPct > 0.0 && gridPrice <= (breachedSellDepth + tol))
+               continue; // Level ini sudah pernah ditembus/dipakai, DILARANG order lagi!
+
+            string comment = StringFormat("B%d_SL%d", channel.batchId, i);
+            if(ExtTrade.SellLimit(InpStaticLot, gridPrice, symbol, slPrice, tpPrice, ORDER_TIME_GTC, 0, comment))
+            {
+               PrintFormat("[PAC Grid] Placed Sell Limit #%d at %.5f (SL: %.5f, TP: %.5f, Trend: %d, Batch: %s)", 
+                           i, gridPrice, slPrice, tpPrice, m3Trend, channel.batchCode);
+               AddPlacedPrice(gridPrice, g_placedSellPrices);
+            }
          }
       }
    }
