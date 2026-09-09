@@ -77,7 +77,7 @@ int OnInit()
    // 3. Scan History on Init
    // ----------------------------------------------------------------
    ExtStructure.InitHistory(_Symbol, InpHistoryBars);
-   ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars);
+   ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars, &ExtStructure);
 
    PrintFormat("[arbudlogicv1] Init Succeeded on %s. Main TF: M1.", _Symbol);
    PrintFormat("Structure: M1(%d), M3(%d - drawn), M15(%d), H1(%d)",
@@ -108,11 +108,11 @@ void OnTick()
 {
    // 1. Event-driven update on completed candle close (M1, M3, M15, H1)
    ExtStructure.UpdateOnCandleClose(_Symbol);
-   ExtRBRDBD.UpdateOnCandleClose(_Symbol);
+   ExtRBRDBD.UpdateOnCandleClose(_Symbol, &ExtStructure);
 
    // 2. Real-time consumption & Roof-Floor update on tick
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   ExtRBRDBD.UpdateConsumptionOnTick(_Symbol, bid, ask);
+   ExtRBRDBD.UpdateConsumptionOnTick(_Symbol, bid, ask, &ExtStructure);
 }
 //+------------------------------------------------------------------+

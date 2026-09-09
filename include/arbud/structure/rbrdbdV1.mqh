@@ -9,6 +9,8 @@
 #property link      "https://www.mql5.com"
 #property strict
 
+#include "StructureV0.mqh"
+
 //+------------------------------------------------------------------+
 //| Enums                                                            |
 //+------------------------------------------------------------------+
@@ -211,18 +213,18 @@ public:
    //+------------------------------------------------------------------+
    //| Scan history bars from past to present and track consumption     |
    //+------------------------------------------------------------------+
-   void InitHistory(const string symbol, const int maxBars = 500)
+   void InitHistory(const string symbol, const int maxBars = 500, CStructureV0 *structureEngine = NULL)
    {
       for(int i = 0; i < m_totalTFs; i++)
       {
-         InitTFHistory(symbol, m_tfList[i], maxBars);
+         InitTFHistory(symbol, m_tfList[i], maxBars, structureEngine);
       }
    }
 
    //+------------------------------------------------------------------+
    //| Event-Driven Update: Called in OnTick, runs when candle closes   |
    //+------------------------------------------------------------------+
-   void UpdateOnCandleClose(const string symbol)
+   void UpdateOnCandleClose(const string symbol, CStructureV0 *structureEngine = NULL)
    {
       for(int i = 0; i < m_totalTFs; i++)
       {
@@ -249,7 +251,7 @@ public:
             if(m_tfList[i].drawRoofFloor)
             {
                double curPrice = SymbolInfoDouble(symbol, SYMBOL_BID);
-               CalculateRoofFloorChannel(symbol, m_tfList[i], curPrice);
+               CalculateRoofFloorChannel(symbol, m_tfList[i], curPrice, structureEngine);
                DrawRoofFloorChannel(m_tfList[i]);
             }
          }
@@ -259,7 +261,7 @@ public:
    //+------------------------------------------------------------------+
    //| Real-time consumption evaluation from live tick (Bid/Ask)        |
    //+------------------------------------------------------------------+
-   void UpdateConsumptionOnTick(const string symbol, const double bid, const double ask)
+   void UpdateConsumptionOnTick(const string symbol, const double bid, const double ask, CStructureV0 *structureEngine = NULL)
    {
       datetime currentTickTime = TimeCurrent();
 
@@ -287,7 +289,7 @@ public:
          if(m_tfList[i].drawRoofFloor)
          {
             double curPrice = (bid > 0) ? bid : ask;
-            CalculateRoofFloorChannel(symbol, m_tfList[i], curPrice);
+            CalculateRoofFloorChannel(symbol, m_tfList[i], curPrice, structureEngine);
             DrawRoofFloorChannel(m_tfList[i]);
          }
       }
@@ -364,7 +366,7 @@ private:
    //+------------------------------------------------------------------+
    //| Scan history from past to present for one timeframe              |
    //+------------------------------------------------------------------+
-   void InitTFHistory(const string symbol, STimeframeRBRDBDData &data, const int maxBars)
+   void InitTFHistory(const string symbol, STimeframeRBRDBDData &data, const int maxBars, CStructureV0 *structureEngine = NULL)
    {
       MqlRates rates[];
       ArraySetAsSeries(rates, true);
@@ -407,7 +409,7 @@ private:
       if(data.drawRoofFloor)
       {
          double curPrice = SymbolInfoDouble(symbol, SYMBOL_BID);
-         CalculateRoofFloorChannel(symbol, data, curPrice);
+         CalculateRoofFloorChannel(symbol, data, curPrice, structureEngine);
          DrawRoofFloorChannel(data);
       }
 
@@ -700,165 +702,363 @@ private:
    }
 
    //+------------------------------------------------------------------+
-   //| Calculate Roof & Floor with 3-Level Fallback Strategy            |
+   //| Calculate Roof & Floor with 5-Level Priority Hierarchy           |
    //+------------------------------------------------------------------+
-   void CalculateRoofFloorChannel(const string symbol, STimeframeRBRDBDData &data, const double currentPrice)
+   void CalculateRoofFloorChannel(const string symbol, 
+                                  STimeframeRBRDBDData &data, 
+                                  const double currentPrice, 
+                                  CStructureV0 *structureEngine = NULL)
    {
       data.currentChannel.Init();
       if(currentPrice <= 0.0) return;
 
-      int totalAreas = ArraySize(data.areas);
+      int currentTFIndex = FindTFIndex(data.tf);
+      ENUM_TIMEFRAMES higherTF = GetNextHigherTF(data.tf);
+      int higherTFIndex = (higherTF != PERIOD_CURRENT) ? FindTFIndex(higherTF) : -1;
 
-      // --- 1. LEVEL 1: Search Nearest Valid DBD above price & RBR below price ---
-      double nearestRoofDBD   = DBL_MAX;
-      datetime nearestRoofTime = 0;
+      // ====================================================================
+      // 1. DETERMINE ROOF (PRIORITAS 1 -> 2 -> 3 -> 4 -> INVALID)
+      // ====================================================================
+      double roofPrice = 0.0;
+      string roofSource = "";
+      datetime roofTime = 0;
 
-      double nearestFloorRBR  = 0.0;
-      datetime nearestFloorTime = 0;
-
-      for(int i = 0; i < totalAreas; i++)
+      // --- Prioritas 1: DBD terdekat di TF yang sama (di atas harga) ---
+      if(currentTFIndex >= 0)
       {
-         if(data.areas[i].isInvalid) continue;
-
-         // DBD (Supply) as Roof: base top border is Distal
-         if(data.areas[i].type == RBRDBD_DBD)
+         double nearestDBD = DBL_MAX;
+         datetime nTime = 0;
+         for(int a = 0; a < ArraySize(m_tfList[currentTFIndex].areas); a++)
          {
-            double dbdTop = data.areas[i].distal;
-            if(dbdTop >= currentPrice && dbdTop < nearestRoofDBD)
+            if(m_tfList[currentTFIndex].areas[a].isInvalid) continue;
+            if(m_tfList[currentTFIndex].areas[a].type == RBRDBD_DBD)
             {
-               nearestRoofDBD   = dbdTop;
-               nearestRoofTime  = data.areas[i].baseStart;
-            }
-         }
-         // RBR (Demand) as Floor: base bottom border is Distal
-         else if(data.areas[i].type == RBRDBD_RBR)
-         {
-            double rbrBottom = data.areas[i].distal;
-            if(rbrBottom <= currentPrice && rbrBottom > nearestFloorRBR)
-            {
-               nearestFloorRBR   = rbrBottom;
-               nearestFloorTime  = data.areas[i].baseStart;
-            }
-         }
-      }
-
-      // --- Determine Roof ---
-      if(nearestRoofDBD < DBL_MAX)
-      {
-         data.currentChannel.roofPrice  = nearestRoofDBD;
-         data.currentChannel.roofSource = "DBD";
-         if(data.currentChannel.startTime == 0 || nearestRoofTime < data.currentChannel.startTime)
-            data.currentChannel.startTime = nearestRoofTime;
-      }
-      else
-      {
-         // --- LEVEL 2 Fallback: Nearest Swing High above current price ---
-         MqlRates rates[];
-         ArraySetAsSeries(rates, true);
-         int copied = CopyRates(symbol, data.tf, 0, 100, rates);
-
-         double swingHighAbove = DBL_MAX;
-         datetime shTime = 0;
-
-         if(copied >= 5)
-         {
-            for(int b = 2; b < copied - 2; b++)
-            {
-               if(rates[b].high > rates[b - 1].high && rates[b].high > rates[b + 1].high)
+               double top = m_tfList[currentTFIndex].areas[a].distal;
+               if(top >= currentPrice && top < nearestDBD)
                {
-                  if(rates[b].high > currentPrice && rates[b].high < swingHighAbove)
-                  {
-                     swingHighAbove = rates[b].high;
-                     shTime = rates[b].time;
-                  }
+                  nearestDBD = top;
+                  nTime      = m_tfList[currentTFIndex].areas[a].baseStart;
                }
             }
          }
-
-         if(swingHighAbove < DBL_MAX)
+         if(nearestDBD < DBL_MAX)
          {
-            data.currentChannel.roofPrice  = swingHighAbove;
-            data.currentChannel.roofSource = "SwingHigh (Fallback)";
-            if(data.currentChannel.startTime == 0 || shTime < data.currentChannel.startTime)
-               data.currentChannel.startTime = shTime;
-         }
-         else
-         {
-            // --- LEVEL 3 Fallback: ATH Condition (Dynamic Range / ATR Projection) ---
-            double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-            double defaultOffset = (point > 0) ? 200 * point : 2.0;
-
-            if(nearestFloorRBR > 0.0)
-               data.currentChannel.roofPrice = currentPrice + (currentPrice - nearestFloorRBR);
-            else
-               data.currentChannel.roofPrice = currentPrice + defaultOffset;
-
-            data.currentChannel.roofSource = "ATH (Projected)";
+            roofPrice  = nearestDBD;
+            roofSource = EnumToString(data.tf) + " DBD";
+            roofTime   = nTime;
          }
       }
 
-      // --- Determine Floor ---
-      if(nearestFloorRBR > 0.0)
+      // --- Prioritas 2: DBD terdekat di 1 level TF di atasnya ---
+      if(roofPrice <= 0.0 && higherTFIndex >= 0)
       {
-         data.currentChannel.floorPrice  = nearestFloorRBR;
-         data.currentChannel.floorSource = "RBR";
-         if(data.currentChannel.startTime == 0 || nearestFloorTime < data.currentChannel.startTime)
-            data.currentChannel.startTime = nearestFloorTime;
-      }
-      else
-      {
-         // --- LEVEL 2 Fallback: Nearest Swing Low below current price ---
-         MqlRates rates[];
-         ArraySetAsSeries(rates, true);
-         int copied = CopyRates(symbol, data.tf, 0, 100, rates);
-
-         double swingLowBelow = 0.0;
-         datetime slTime = 0;
-
-         if(copied >= 5)
+         double nearestDBD = DBL_MAX;
+         datetime nTime = 0;
+         for(int a = 0; a < ArraySize(m_tfList[higherTFIndex].areas); a++)
          {
-            for(int b = 2; b < copied - 2; b++)
+            if(m_tfList[higherTFIndex].areas[a].isInvalid) continue;
+            if(m_tfList[higherTFIndex].areas[a].type == RBRDBD_DBD)
             {
-               if(rates[b].low < rates[b - 1].low && rates[b].low < rates[b + 1].low)
+               double top = m_tfList[higherTFIndex].areas[a].distal;
+               if(top >= currentPrice && top < nearestDBD)
                {
-                  if(rates[b].low < currentPrice && rates[b].low > swingLowBelow)
-                  {
-                     swingLowBelow = rates[b].low;
-                     slTime = rates[b].time;
-                  }
+                  nearestDBD = top;
+                  nTime      = m_tfList[higherTFIndex].areas[a].baseStart;
                }
             }
          }
-
-         if(swingLowBelow > 0.0)
+         if(nearestDBD < DBL_MAX)
          {
-            data.currentChannel.floorPrice  = swingLowBelow;
-            data.currentChannel.floorSource = "SwingLow (Fallback)";
-            if(data.currentChannel.startTime == 0 || slTime < data.currentChannel.startTime)
-               data.currentChannel.startTime = slTime;
-         }
-         else
-         {
-            // --- LEVEL 3 Fallback: ATL Condition (Dynamic Range / ATR Projection) ---
-            double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-            double defaultOffset = (point > 0) ? 200 * point : 2.0;
-
-            if(data.currentChannel.roofPrice > currentPrice)
-               data.currentChannel.floorPrice = currentPrice - (data.currentChannel.roofPrice - currentPrice);
-            else
-               data.currentChannel.floorPrice = currentPrice - defaultOffset;
-
-            data.currentChannel.floorSource = "ATL (Projected)";
+            roofPrice  = nearestDBD;
+            roofSource = EnumToString(higherTF) + " DBD (Higher TF)";
+            roofTime   = nTime;
          }
       }
 
-      if(data.currentChannel.startTime == 0)
-         data.currentChannel.startTime = TimeCurrent() - (PeriodSeconds(data.tf) * 30);
+      // --- Prioritas 3: Structure Swing High ke-2 terdekat di TF yang sama ---
+      if(roofPrice <= 0.0 && structureEngine != NULL)
+      {
+         double sh2Price = 0.0;
+         datetime sh2Time = 0;
+         string sh2Label = "";
+         if(FindSecondNearestSwingHigh(structureEngine, data.tf, currentPrice, sh2Price, sh2Time, sh2Label))
+         {
+            roofPrice  = sh2Price;
+            roofSource = EnumToString(data.tf) + " Struct #2 (" + sh2Label + ")";
+            roofTime   = sh2Time;
+         }
+      }
 
+      // --- Prioritas 4: Structure Swing High ke-2 terdekat di 1 level TF di atasnya ---
+      if(roofPrice <= 0.0 && structureEngine != NULL && higherTF != PERIOD_CURRENT)
+      {
+         double sh2Price = 0.0;
+         datetime sh2Time = 0;
+         string sh2Label = "";
+         if(FindSecondNearestSwingHigh(structureEngine, higherTF, currentPrice, sh2Price, sh2Time, sh2Label))
+         {
+            roofPrice  = sh2Price;
+            roofSource = EnumToString(higherTF) + " Struct #2 (" + sh2Label + " Higher TF)";
+            roofTime   = sh2Time;
+         }
+      }
+
+      // ====================================================================
+      // 2. DETERMINE FLOOR (PRIORITAS 1 -> 2 -> 3 -> 4 -> INVALID)
+      // ====================================================================
+      double floorPrice = 0.0;
+      string floorSource = "";
+      datetime floorTime = 0;
+
+      // --- Prioritas 1: RBR terdekat di TF yang sama (di bawah harga) ---
+      if(currentTFIndex >= 0)
+      {
+         double nearestRBR = 0.0;
+         datetime nTime = 0;
+         for(int a = 0; a < ArraySize(m_tfList[currentTFIndex].areas); a++)
+         {
+            if(m_tfList[currentTFIndex].areas[a].isInvalid) continue;
+            if(m_tfList[currentTFIndex].areas[a].type == RBRDBD_RBR)
+            {
+               double bottom = m_tfList[currentTFIndex].areas[a].distal;
+               if(bottom <= currentPrice && bottom > nearestRBR)
+               {
+                  nearestRBR = bottom;
+                  nTime      = m_tfList[currentTFIndex].areas[a].baseStart;
+               }
+            }
+         }
+         if(nearestRBR > 0.0)
+         {
+            floorPrice  = nearestRBR;
+            floorSource = EnumToString(data.tf) + " RBR";
+            floorTime   = nTime;
+         }
+      }
+
+      // --- Prioritas 2: RBR terdekat di 1 level TF di atasnya ---
+      if(floorPrice <= 0.0 && higherTFIndex >= 0)
+      {
+         double nearestRBR = 0.0;
+         datetime nTime = 0;
+         for(int a = 0; a < ArraySize(m_tfList[higherTFIndex].areas); a++)
+         {
+            if(m_tfList[higherTFIndex].areas[a].isInvalid) continue;
+            if(m_tfList[higherTFIndex].areas[a].type == RBRDBD_RBR)
+            {
+               double bottom = m_tfList[higherTFIndex].areas[a].distal;
+               if(bottom <= currentPrice && bottom > nearestRBR)
+               {
+                  nearestRBR = bottom;
+                  nTime      = m_tfList[higherTFIndex].areas[a].baseStart;
+               }
+            }
+         }
+         if(nearestRBR > 0.0)
+         {
+            floorPrice  = nearestRBR;
+            floorSource = EnumToString(higherTF) + " RBR (Higher TF)";
+            floorTime   = nTime;
+         }
+      }
+
+      // --- Prioritas 3: Structure Swing Low ke-2 terdekat di TF yang sama ---
+      if(floorPrice <= 0.0 && structureEngine != NULL)
+      {
+         double sl2Price = 0.0;
+         datetime sl2Time = 0;
+         string sl2Label = "";
+         if(FindSecondNearestSwingLow(structureEngine, data.tf, currentPrice, sl2Price, sl2Time, sl2Label))
+         {
+            floorPrice  = sl2Price;
+            floorSource = EnumToString(data.tf) + " Struct #2 (" + sl2Label + ")";
+            floorTime   = sl2Time;
+         }
+      }
+
+      // --- Prioritas 4: Structure Swing Low ke-2 terdekat di 1 level TF di atasnya ---
+      if(floorPrice <= 0.0 && structureEngine != NULL && higherTF != PERIOD_CURRENT)
+      {
+         double sl2Price = 0.0;
+         datetime sl2Time = 0;
+         string sl2Label = "";
+         if(FindSecondNearestSwingLow(structureEngine, higherTF, currentPrice, sl2Price, sl2Time, sl2Label))
+         {
+            floorPrice  = sl2Price;
+            floorSource = EnumToString(higherTF) + " Struct #2 (" + sl2Label + " Higher TF)";
+            floorTime   = sl2Time;
+         }
+      }
+
+      // ====================================================================
+      // 3. VALIDASI AKHIR (PRIORITAS 5: JIKA TIDAK DITEMUKAN -> INVALID)
+      // ====================================================================
+      if(roofPrice <= 0.0 || floorPrice <= 0.0 || roofPrice <= floorPrice)
+      {
+         data.currentChannel.Init();
+         data.currentChannel.channelName = m_objPrefix + EnumToString(data.tf) + "_RoofFloor";
+         data.currentChannel.isValid = false;
+         return; // Invalid channel!
+      }
+
+      // Channel Valid
+      data.currentChannel.isValid     = true;
+      data.currentChannel.roofPrice   = roofPrice;
+      data.currentChannel.floorPrice  = floorPrice;
+      data.currentChannel.roofSource  = roofSource;
+      data.currentChannel.floorSource = floorSource;
+
+      datetime tStart = (roofTime > 0 && floorTime > 0) ? MathMin(roofTime, floorTime) : MathMax(roofTime, floorTime);
+      if(tStart == 0) tStart = TimeCurrent() - (PeriodSeconds(data.tf) * 20);
+
+      data.currentChannel.startTime   = tStart;
       data.currentChannel.endTime     = TimeCurrent() + (PeriodSeconds(data.tf) * 15);
-      data.currentChannel.medianPrice = (data.currentChannel.roofPrice + data.currentChannel.floorPrice) / 2.0;
-      data.currentChannel.isValid     = (data.currentChannel.roofPrice > data.currentChannel.floorPrice);
+      data.currentChannel.medianPrice = (roofPrice + floorPrice) / 2.0;
       data.currentChannel.channelName = m_objPrefix + EnumToString(data.tf) + "_RoofFloor";
+   }
+
+   //+------------------------------------------------------------------+
+   //| Helper: Get Next Higher Timeframe in registered ladder           |
+   //+------------------------------------------------------------------+
+   ENUM_TIMEFRAMES GetNextHigherTF(const ENUM_TIMEFRAMES tf)
+   {
+      // Known ladder: M1 -> M3 -> M15 -> H1
+      if(tf == PERIOD_M1)  return PERIOD_M3;
+      if(tf == PERIOD_M3)  return PERIOD_M15;
+      if(tf == PERIOD_M15) return PERIOD_H1;
+      return PERIOD_CURRENT; // No higher TF defined beyond H1
+   }
+
+   //+------------------------------------------------------------------+
+   //| Helper: Find the 2nd nearest Swing High above current price      |
+   //+------------------------------------------------------------------+
+   bool FindSecondNearestSwingHigh(CStructureV0 *structureEngine,
+                                  const ENUM_TIMEFRAMES tf,
+                                  const double currentPrice,
+                                  double &outPrice,
+                                  datetime &outTime,
+                                  string &outLabel)
+   {
+      SStructurePoint structs[];
+      if(!structureEngine.GetStructures(tf, structs)) return false;
+
+      int total = ArraySize(structs);
+      if(total < 2) return false;
+
+      // Collect all swing highs above current price
+      double highs[];
+      datetime times[];
+      string labels[];
+      ArrayResize(highs, 0);
+      ArrayResize(times, 0);
+      ArrayResize(labels, 0);
+
+      for(int i = 0; i < total; i++)
+      {
+         string lbl = structs[i].label;
+         if(lbl == "H" || lbl == "HH" || lbl == "LH")
+         {
+            if(structs[i].priceH > currentPrice)
+            {
+               int s = ArraySize(highs);
+               ArrayResize(highs, s + 1);
+               ArrayResize(times, s + 1);
+               ArrayResize(labels, s + 1);
+               highs[s]  = structs[i].priceH;
+               times[s]  = structs[i].candleTime;
+               labels[s] = lbl;
+            }
+         }
+      }
+
+      int count = ArraySize(highs);
+      if(count < 2) return false; // Need at least 2 to pick the 2nd nearest!
+
+      // Sort ascending (nearest to currentPrice first)
+      for(int i = 0; i < count - 1; i++)
+      {
+         for(int j = i + 1; j < count; j++)
+         {
+            if(highs[j] < highs[i])
+            {
+               double tempH = highs[i];   highs[i]  = highs[j];  highs[j]  = tempH;
+               datetime tempT = times[i]; times[i]  = times[j];  times[j]  = tempT;
+               string tempL = labels[i];  labels[i] = labels[j]; labels[j] = tempL;
+            }
+         }
+      }
+
+      // Pick the 2nd nearest (index 1)
+      outPrice = highs[1];
+      outTime  = times[1];
+      outLabel = labels[1];
+      return true;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Helper: Find the 2nd nearest Swing Low below current price       |
+   //+------------------------------------------------------------------+
+   bool FindSecondNearestSwingLow(CStructureV0 *structureEngine,
+                                 const ENUM_TIMEFRAMES tf,
+                                 const double currentPrice,
+                                 double &outPrice,
+                                 datetime &outTime,
+                                 string &outLabel)
+   {
+      SStructurePoint structs[];
+      if(!structureEngine.GetStructures(tf, structs)) return false;
+
+      int total = ArraySize(structs);
+      if(total < 2) return false;
+
+      // Collect all swing lows below current price
+      double lows[];
+      datetime times[];
+      string labels[];
+      ArrayResize(lows, 0);
+      ArrayResize(times, 0);
+      ArrayResize(labels, 0);
+
+      for(int i = 0; i < total; i++)
+      {
+         string lbl = structs[i].label;
+         if(lbl == "L" || lbl == "LL" || lbl == "HL")
+         {
+            if(structs[i].priceL < currentPrice)
+            {
+               int s = ArraySize(lows);
+               ArrayResize(lows, s + 1);
+               ArrayResize(times, s + 1);
+               ArrayResize(labels, s + 1);
+               lows[s]  = structs[i].priceL;
+               times[s]  = structs[i].candleTime;
+               labels[s] = lbl;
+            }
+         }
+      }
+
+      int count = ArraySize(lows);
+      if(count < 2) return false; // Need at least 2 to pick the 2nd nearest!
+
+      // Sort descending (nearest to currentPrice first: e.g. 2630 before 2620)
+      for(int i = 0; i < count - 1; i++)
+      {
+         for(int j = i + 1; j < count; j++)
+         {
+            if(lows[j] > lows[i])
+            {
+               double tempL = lows[i];    lows[i]   = lows[j];   lows[j]   = tempL;
+               datetime tempT = times[i]; times[i]  = times[j];  times[j]  = tempT;
+               string tempLStr = labels[i]; labels[i] = labels[j]; labels[j] = tempLStr;
+            }
+         }
+      }
+
+      // Pick the 2nd nearest (index 1)
+      outPrice = lows[1];
+      outTime  = times[1];
+      outLabel = labels[1];
+      return true;
    }
 
    //+------------------------------------------------------------------+
@@ -866,14 +1066,23 @@ private:
    //+------------------------------------------------------------------+
    void DrawRoofFloorChannel(STimeframeRBRDBDData &data)
    {
-      if(!data.currentChannel.isValid) return;
-
-      string baseName  = data.currentChannel.channelName;
+      string baseName  = m_objPrefix + EnumToString(data.tf) + "_RoofFloor";
       string boxName   = baseName + "_Box";
       string roofLine  = baseName + "_RoofLine";
       string floorLine = baseName + "_FloorLine";
       string eqLine    = baseName + "_EqLine";
       string labelName = baseName + "_Lbl";
+
+      // If channel is invalid (either roof or floor not found), delete all channel objects!
+      if(!data.currentChannel.isValid)
+      {
+         ObjectDelete(0, boxName);
+         ObjectDelete(0, roofLine);
+         ObjectDelete(0, floorLine);
+         ObjectDelete(0, eqLine);
+         ObjectDelete(0, labelName);
+         return;
+      }
 
       datetime tStart = data.currentChannel.startTime;
       datetime tEnd   = data.currentChannel.endTime;
