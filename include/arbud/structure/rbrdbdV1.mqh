@@ -87,6 +87,8 @@ struct SRoofFloorChannel
 
    string            roofSource;       // "DBD", "Higher TF DBD", "Struct #2", etc.
    string            floorSource;      // "RBR", "Higher TF RBR", "Struct #2", etc.
+   datetime          roofTime;         // Base candle start time of Roof
+   datetime          floorTime;        // Base candle start time of Floor
    datetime          startTime;        // Earliest relevant base start time
    datetime          endTime;          // Future projection time
    string            channelName;
@@ -112,6 +114,8 @@ struct SRoofFloorChannel
       buyAreaUsedPct    = 0.0;
       roofSource        = "";
       floorSource       = "";
+      roofTime          = 0;
+      floorTime         = 0;
       startTime         = 0;
       endTime           = 0;
       channelName       = "";
@@ -1047,10 +1051,39 @@ private:
       data.currentChannel.levelStopBottom   = stopBottom;
       data.currentChannel.roofSource        = roofSource;
       data.currentChannel.floorSource       = floorSource;
+      data.currentChannel.roofTime          = roofTime;
+      data.currentChannel.floorTime         = floorTime;
 
       // Track consumption of Buy Area (0%-25%) & Sell Area (75%-100%)
       double buyAreaHeight  = data.currentChannel.levelBuyBoundary - floorPrice;   // 25% of range
       double sellAreaHeight = roofPrice - data.currentChannel.levelSellBoundary;  // 25% of range
+
+      // --------------------------------------------------------------------
+      // Retroactive Check: Hitung konsumsi sejak Base terbentuk s/d sekarang
+      // --------------------------------------------------------------------
+      double retroLowestLow   = DBL_MAX;
+      double retroHighestHigh = 0.0;
+
+      datetime earliestTime = (roofTime > 0 && floorTime > 0) ? MathMin(roofTime, floorTime) : MathMax(roofTime, floorTime);
+      if(earliestTime > 0)
+      {
+         MqlRates historyRates[];
+         ArraySetAsSeries(historyRates, true);
+         int barsCopied = CopyRates(symbol, data.tf, earliestTime, TimeCurrent(), historyRates);
+         for(int b = 0; b < barsCopied; b++)
+         {
+            // Pengecekan riwayat harga untuk Floor (Buy Area)
+            if(floorTime > 0 && historyRates[b].time >= floorTime)
+            {
+               if(historyRates[b].low < retroLowestLow) retroLowestLow = historyRates[b].low;
+            }
+            // Pengecekan riwayat harga untuk Roof (Sell Area)
+            if(roofTime > 0 && historyRates[b].time >= roofTime)
+            {
+               if(historyRates[b].high > retroHighestHigh) retroHighestHigh = historyRates[b].high;
+            }
+         }
+      }
 
       // Check against current price or bar extremes
       double currentBid = SymbolInfoDouble(symbol, SYMBOL_BID);
@@ -1063,6 +1096,9 @@ private:
          if(lastRates[0].low < lowCheck)   lowCheck  = lastRates[0].low;
          if(lastRates[0].high > highCheck) highCheck = lastRates[0].high;
       }
+
+      if(retroLowestLow < lowCheck)   lowCheck  = retroLowestLow;
+      if(retroHighestHigh > highCheck) highCheck = retroHighestHigh;
 
       // Buy Area Used: Price masuk dari level 25% turun mendekati floor (0%)
       if(buyAreaHeight > 0.0 && lowCheck < data.currentChannel.levelBuyBoundary)

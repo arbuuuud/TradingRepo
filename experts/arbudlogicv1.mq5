@@ -78,6 +78,7 @@ double g_placedBuyPrices[];
 double g_placedSellPrices[];
 double g_lastChannelRoof  = 0.0;
 double g_lastChannelFloor = 0.0;
+int    g_currentActiveBatchId = 0;
 datetime g_lastM3BarTime  = 0;
 int g_completedTPBatchIds[];
 
@@ -112,6 +113,7 @@ bool CalculateM3Equilibrium(const string symbol, const int lookback, double &out
 void CloseAllPositionsAndOrders(const string symbol, const string reason);
 void CancelAllPendingOrders(const string symbol, const string reason);
 void CancelPendingOrdersByBatch(const int batchId, const string reason);
+void CleanupObsoletePendingOrders(const int currentActiveBatchId);
 void CheckStandardTPClosedOrders();
 bool IsPriceAlreadyOrdered(const double price, const double &placedArray[], const double tolerance);
 void AddPlacedPrice(const double price, double &placedArray[]);
@@ -218,11 +220,15 @@ void OnTick()
 //+------------------------------------------------------------------+
 void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
 {
-   // Deteksi jika channel bergeser/berubah drastis -> reset placed grid
-   if(g_lastChannelRoof != channel.roofPrice || g_lastChannelFloor != channel.floorPrice)
+   // Deteksi jika channel bergeser/berubah drastis atau batch berganti
+   if(g_lastChannelRoof != channel.roofPrice || g_lastChannelFloor != channel.floorPrice || g_currentActiveBatchId != channel.batchId)
    {
-      g_lastChannelRoof  = channel.roofPrice;
-      g_lastChannelFloor = channel.floorPrice;
+      // Bersihkan semua pending order lama yang bukan milik batch aktif baru
+      CleanupObsoletePendingOrders(channel.batchId);
+
+      g_lastChannelRoof      = channel.roofPrice;
+      g_lastChannelFloor     = channel.floorPrice;
+      g_currentActiveBatchId = channel.batchId;
       ArrayResize(g_placedBuyPrices, 0);
       ArrayResize(g_placedSellPrices, 0);
    }
@@ -886,6 +892,32 @@ void CancelPendingOrdersByBatch(const int batchId, const string reason)
       {
          ExtTrade.OrderDelete(ticket);
          PrintFormat("[Orders] Pending Order #%I64u (%s) cancelled. Reason: %s", ticket, comment, reason);
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Cancel any pending orders that do NOT belong to the active batch |
+//+------------------------------------------------------------------+
+void CleanupObsoletePendingOrders(const int currentActiveBatchId)
+{
+   if(currentActiveBatchId <= 0) return;
+   string activePrefix = StringFormat("B%d_", currentActiveBatchId);
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket <= 0) continue;
+      if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
+      if(OrderGetInteger(ORDER_MAGIC) != InpMagicNumber) continue;
+
+      string comment = OrderGetString(ORDER_COMMENT);
+      // Jika order diawali "B" dan bukan milik active batch, batalkan!
+      if(StringFind(comment, "B") == 0 && StringFind(comment, activePrefix) != 0)
+      {
+         ExtTrade.OrderDelete(ticket);
+         PrintFormat("[Orders] Obsolete Pending Order #%I64u (%s) cancelled because channel shifted to Batch #%d", 
+                     ticket, comment, currentActiveBatchId);
       }
    }
 }
