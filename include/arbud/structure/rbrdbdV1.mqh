@@ -34,6 +34,7 @@ struct SRBRDBDArea
    int               baseCandleCount;  // 1 to N base candles
    double            consumptionPct;   // 0.0% to 100.0%
    bool              isInvalid;        // True if consumption >= 100.0%
+   datetime          invalidTime;      // Candle time when 100% consumption occurred
    datetime          lastCheckedTime;  // Bar time when consumption was last evaluated
    string            objName;          // Chart rectangle object name
 
@@ -49,6 +50,7 @@ struct SRBRDBDArea
       baseCandleCount = 0;
       consumptionPct  = 0.0;
       isInvalid       = false;
+      invalidTime     = 0;
       lastCheckedTime = 0;
       objName         = "";
    }
@@ -202,6 +204,8 @@ public:
    //+------------------------------------------------------------------+
    void UpdateConsumptionOnTick(const string symbol, const double bid, const double ask)
    {
+      datetime currentTickTime = TimeCurrent();
+
       for(int i = 0; i < m_totalTFs; i++)
       {
          bool changed = false;
@@ -212,7 +216,7 @@ public:
             if(m_tfList[i].areas[a].isInvalid) continue;
 
             double testPrice = (m_tfList[i].areas[a].type == RBRDBD_RBR) ? bid : ask;
-            if(UpdateSingleAreaConsumption(m_tfList[i].areas[a], testPrice, testPrice))
+            if(UpdateSingleAreaConsumption(m_tfList[i].areas[a], testPrice, testPrice, currentTickTime))
             {
                changed = true;
             }
@@ -311,7 +315,7 @@ private:
          {
             if(rates[b].time > data.areas[a].legOutTime)
             {
-               UpdateSingleAreaConsumption(data.areas[a], rates[b].low, rates[b].high);
+               UpdateSingleAreaConsumption(data.areas[a], rates[b].low, rates[b].high, rates[b].time);
                if(data.areas[a].isInvalid) break;
             }
          }
@@ -470,14 +474,14 @@ private:
          if(data.areas[a].isInvalid) continue;
          if(rates[0].time <= data.areas[a].legOutTime) continue;
 
-         UpdateSingleAreaConsumption(data.areas[a], rates[0].low, rates[0].high);
+         UpdateSingleAreaConsumption(data.areas[a], rates[0].low, rates[0].high, rates[0].time);
       }
    }
 
    //+------------------------------------------------------------------+
    //| Calculate and update consumption percentage for a single zone    |
    //+------------------------------------------------------------------+
-   bool UpdateSingleAreaConsumption(SRBRDBDArea &area, const double testLow, const double testHigh)
+   bool UpdateSingleAreaConsumption(SRBRDBDArea &area, const double testLow, const double testHigh, const datetime hitTime)
    {
       if(area.isInvalid || area.zoneHeight <= 0.0) return false;
 
@@ -502,6 +506,7 @@ private:
             {
                area.consumptionPct = 100.0;
                area.isInvalid      = true;
+               area.invalidTime    = hitTime;
                updated             = true;
             }
          }
@@ -525,6 +530,7 @@ private:
             {
                area.consumptionPct = 100.0;
                area.isInvalid      = true;
+               area.invalidTime    = hitTime;
                updated             = true;
             }
          }
@@ -567,11 +573,18 @@ private:
          double topPrice = MathMax(area.proximal, area.distal);
          double botPrice = MathMin(area.proximal, area.distal);
 
+         // End time: if invalid (100% used), stop exactly at the candle that consumed it!
+         datetime rectEndTime = futureTime;
+         if(area.isInvalid && area.invalidTime > 0)
+         {
+            rectEndTime = area.invalidTime;
+         }
+
          // Draw / Update Rectangle
-         if(!ObjectCreate(0, rectName, OBJ_RECTANGLE, 0, area.baseStart, topPrice, futureTime, botPrice))
+         if(!ObjectCreate(0, rectName, OBJ_RECTANGLE, 0, area.baseStart, topPrice, rectEndTime, botPrice))
          {
             ObjectMove(0, rectName, 0, area.baseStart, topPrice);
-            ObjectMove(0, rectName, 1, futureTime, botPrice);
+            ObjectMove(0, rectName, 1, rectEndTime, botPrice);
          }
          ObjectSetInteger(0, rectName, OBJPROP_COLOR, clr);
          ObjectSetInteger(0, rectName, OBJPROP_FILL, true);
@@ -583,13 +596,13 @@ private:
          string typeStr = (area.type == RBRDBD_RBR) ? "RBR" : "DBD";
          string statusStr;
          if(area.isInvalid)
-            statusStr = StringFormat(" %s %s [%d C] (100%% Used - Invalid)", EnumToString(data.tf), typeStr, area.baseCandleCount);
+            statusStr = StringFormat(" %s %s [%d C] (100%% Used)", EnumToString(data.tf), typeStr, area.baseCandleCount);
          else if(area.consumptionPct > 0.0)
             statusStr = StringFormat(" %s %s [%d C] (%.1f%% Used)", EnumToString(data.tf), typeStr, area.baseCandleCount, area.consumptionPct);
          else
             statusStr = StringFormat(" %s %s [%d C] (Fresh)", EnumToString(data.tf), typeStr, area.baseCandleCount);
 
-         // Draw / Update Text
+         // Draw / Update Text (pinned to baseStart)
          if(!ObjectCreate(0, textName, OBJ_TEXT, 0, area.baseStart, topPrice))
          {
             ObjectMove(0, textName, 0, area.baseStart, topPrice);
