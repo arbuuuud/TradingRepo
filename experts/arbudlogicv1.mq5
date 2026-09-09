@@ -36,13 +36,10 @@ input bool              InpEnableSmartTP     = true;            // Enable Early 
 input double            InpSmartTPThreshold  = 75.0;            // Threshold % to trigger Smart TP & Cancel Grid (Default 75%)
 input int               InpDefaultSpreadPoints = 35;            // Default Spread Points for Smart TP buffer (Min profit = 2x spread)
 
-input group "=== Candle Close SL & Breakeven Settings ==="
+input group "=== Candle Close SL Settings ==="
 input bool              InpUseCandleCloseSL  = true;            // Cutloss on M1 Candle Close in 15%-30% outer zone
 input double            InpCloseZoneMinPct   = 15.0;            // Min % outside Floor/Roof for M1 Close SL (Default: 15%)
 input double            InpCloseZoneMaxPct   = 30.0;            // Max % outside Floor/Roof for M1 Close SL (Default: 30%)
-input bool              InpEnableBreakeven   = true;            // Enable Smart Breakeven (BE)
-input int               InpBETriggerPoints   = 40;              // Min Floating Profit in Points to trigger BE (Default: 40)
-input int               InpBELockPoints      = 5;               // Points locked above/below entry for BE (Default: 5)
 
 input group "=== M1 Structure Settings ==="
 input bool              InpEnableStructM1    = true;            // Enable M1 Structure Detection
@@ -84,7 +81,6 @@ datetime g_lastM1BarTime  = 0;
 void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel);
 void ManageSmartTP(const string symbol, const SRoofFloorChannel &channel, const double bid, const double ask);
 void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentChannel);
-void ManageBreakeven(const string symbol);
 void CloseAllPositionsAndOrders(const string symbol, const string reason);
 void CancelAllPendingOrders(const string symbol, const string reason);
 void CancelPendingOrdersByBatch(const int batchId, const string reason);
@@ -178,16 +174,13 @@ void OnTick()
    // 5. Anti-Fake Wick: Evaluate Cutloss on completed Candle Close outside Floor/Roof
    CheckCandleCloseSL(_Symbol, channel);
 
-   // 6. Smart Breakeven: Protect floating profits
-   ManageBreakeven(_Symbol);
-
-   // 7. Smart TP Check (Early exit if area was consumed >= 75%)
+   // 6. Smart TP Check (Early exit if area was consumed >= 75%)
    if(InpEnableSmartTP)
    {
       ManageSmartTP(_Symbol, channel, bid, ask);
    }
 
-   // 8. Check Standard TP Deal Closures: if batch already hit TP & area >= 75% used -> cancel remaining pending orders
+   // 7. Check Standard TP Deal Closures: if batch already hit TP & area >= 75% used -> cancel remaining pending orders
    CheckStandardTPClosedOrders();
 }
 
@@ -598,65 +591,6 @@ void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentCha
                         ticket, posComment, close1, sellCloseZoneBot, sellCloseZoneTop, targetChannel.batchId);
             ExtTrade.PositionClose(ticket);
             CancelPendingOrdersByBatch(targetChannel.batchId, "M1 Candle Closed in 15%-30% Outer Zone (SL)");
-         }
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Smart Breakeven: Move SL to Entry + Lock Points when in Profit   |
-//+------------------------------------------------------------------+
-void ManageBreakeven(const string symbol)
-{
-   if(!InpEnableBreakeven) return;
-
-   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
-   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-   double curBid = SymbolInfoDouble(symbol, SYMBOL_BID);
-   double curAsk = SymbolInfoDouble(symbol, SYMBOL_ASK);
-
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket <= 0) continue;
-      if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
-      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
-
-      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-      double currentSL = PositionGetDouble(POSITION_SL);
-      double currentTP = PositionGetDouble(POSITION_TP);
-
-      // --- BUY POSITION BREAKEVEN ---
-      if(posType == POSITION_TYPE_BUY)
-      {
-         double profitPoints = (curBid - openPrice) / point;
-         double newSL = NormalizeDouble(openPrice + (InpBELockPoints * point), digits);
-
-         // Jika floating profit sudah mencapai trigger dan SL belum dipindahkan ke BE
-         if(profitPoints >= InpBETriggerPoints && (currentSL < newSL || currentSL == 0.0))
-         {
-            if(ExtTrade.PositionModify(ticket, newSL, currentTP))
-            {
-               PrintFormat("[Breakeven] BUY #%I64u modified to BE! Open: %.5f, New SL: %.5f (Lock %d pts, Profit: %.1f pts)",
-                           ticket, openPrice, newSL, InpBELockPoints, profitPoints);
-            }
-         }
-      }
-      // --- SELL POSITION BREAKEVEN ---
-      else if(posType == POSITION_TYPE_SELL)
-      {
-         double profitPoints = (openPrice - curAsk) / point;
-         double newSL = NormalizeDouble(openPrice - (InpBELockPoints * point), digits);
-
-         // Jika floating profit sudah mencapai trigger dan SL belum dipindahkan ke BE
-         if(profitPoints >= InpBETriggerPoints && (currentSL > newSL || currentSL == 0.0))
-         {
-            if(ExtTrade.PositionModify(ticket, newSL, currentTP))
-            {
-               PrintFormat("[Breakeven] SELL #%I64u modified to BE! Open: %.5f, New SL: %.5f (Lock %d pts, Profit: %.1f pts)",
-                           ticket, openPrice, newSL, InpBELockPoints, profitPoints);
-            }
          }
       }
    }
