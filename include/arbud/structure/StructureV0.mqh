@@ -502,11 +502,17 @@ private:
          }
       }
 
-      // Determine Trend from latest two confirmed swings
-      string lastLabel = data.structures[size - 1].label;
-      if(lastLabel == "HH")
+      // Determine Trend from latest confirmed swings
+      // User rule:
+      // Bullish: HH-HL atau HL-HH
+      // Bearish: LL-HL atau HL-LL (serta LL-LH / LH-LL)
+      string s1 = data.structures[size - 1].label; // Latest
+      string s2 = data.structures[size - 2].label; // Previous
+
+      if((s2 == "HH" && s1 == "HL") || (s2 == "HL" && s1 == "HH"))
          data.trend = STR_TREND_BULL;
-      else if(lastLabel == "LL")
+      else if((s2 == "LL" && s1 == "HL") || (s2 == "HL" && s1 == "LL") ||
+              (s2 == "LL" && s1 == "LH") || (s2 == "LH" && s1 == "LL"))
          data.trend = STR_TREND_BEAR;
    }
 

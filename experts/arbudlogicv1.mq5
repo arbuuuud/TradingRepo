@@ -28,6 +28,7 @@ input double            InpStaticLot         = 0.01;            // Static Order 
 input int               InpMaxEntry          = 5;               // Max Grid Entry Points per Area (>= 2)
 input bool              InpEnableBuyLimit    = true;            // Enable Buy Limit Grid in Buy Area (0-25%)
 input bool              InpEnableSellLimit   = true;            // Enable Sell Limit Grid in Sell Area (75-100%)
+input bool              InpFilterM15Trend    = true;            // Filter: Only Trade in Direction of M15 Trend
 
 input group "=== Smart TP & Exit Settings ==="
 input bool              InpEnableSmartTP     = true;            // Enable Early TP Exit when Area Used >= 75%
@@ -193,11 +194,20 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
    double curBid = SymbolInfoDouble(symbol, SYMBOL_BID);
    double curAsk = SymbolInfoDouble(symbol, SYMBOL_ASK);
 
+   // Deteksi Trend M15 (BULLISH / BEARISH)
+   ENUM_STR_TREND trendM15 = ExtStructure.GetTrend(PERIOD_M15);
+
    // ---------------------------------------------------------------
    // A. BUY LIMIT GRID IN BUY AREA (0% - 25%)
    // ---------------------------------------------------------------
-   // Syarat: Buy Area belum 100% used
-   if(InpEnableBuyLimit && channel.buyAreaUsedPct < 100.0)
+   // Syarat: Buy Area belum 100% used & Searah Trend M15 (BULLISH)
+   bool allowBuy = InpEnableBuyLimit;
+   if(InpFilterM15Trend && trendM15 != STR_TREND_BULL)
+   {
+      allowBuy = false; // Filter M15 Trend: blokir Buy Limit jika M15 bukan Bullish
+   }
+
+   if(allowBuy && channel.buyAreaUsedPct < 100.0)
    {
       double buyAreaTop = channel.levelBuyBoundary; // 25%
       double buyAreaBot = channel.floorPrice;       // 0%
@@ -221,7 +231,7 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
          string comment = StringFormat("B%d_BL%d", channel.batchId, i);
          if(ExtTrade.BuyLimit(InpStaticLot, gridPrice, symbol, slPrice, tpPrice, ORDER_TIME_GTC, 0, comment))
          {
-            PrintFormat("[Grid] Placed Buy Limit #%d at %.5f (SL: %.5f, TP: %.5f, Batch: %s)", 
+            PrintFormat("[Grid] Placed Buy Limit #%d at %.5f (SL: %.5f, TP: %.5f, Batch: %s, Trend M15: BULLISH)", 
                         i, gridPrice, slPrice, tpPrice, channel.batchCode);
             AddPlacedPrice(gridPrice, g_placedBuyPrices);
          }
@@ -231,8 +241,14 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
    // ---------------------------------------------------------------
    // B. SELL LIMIT GRID IN SELL AREA (75% - 100%)
    // ---------------------------------------------------------------
-   // Syarat: Sell Area belum 100% used
-   if(InpEnableSellLimit && channel.sellAreaUsedPct < 100.0)
+   // Syarat: Sell Area belum 100% used & Searah Trend M15 (BEARISH)
+   bool allowSell = InpEnableSellLimit;
+   if(InpFilterM15Trend && trendM15 != STR_TREND_BEAR)
+   {
+      allowSell = false; // Filter M15 Trend: blokir Sell Limit jika M15 bukan Bearish
+   }
+
+   if(allowSell && channel.sellAreaUsedPct < 100.0)
    {
       double sellAreaBot = channel.levelSellBoundary; // 75%
       double sellAreaTop = channel.roofPrice;         // 100%
@@ -256,7 +272,7 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
          string comment = StringFormat("B%d_SL%d", channel.batchId, i);
          if(ExtTrade.SellLimit(InpStaticLot, gridPrice, symbol, slPrice, tpPrice, ORDER_TIME_GTC, 0, comment))
          {
-            PrintFormat("[Grid] Placed Sell Limit #%d at %.5f (SL: %.5f, TP: %.5f, Batch: %s)", 
+            PrintFormat("[Grid] Placed Sell Limit #%d at %.5f (SL: %.5f, TP: %.5f, Batch: %s, Trend M15: BEARISH)", 
                         i, gridPrice, slPrice, tpPrice, channel.batchCode);
             AddPlacedPrice(gridPrice, g_placedSellPrices);
          }
