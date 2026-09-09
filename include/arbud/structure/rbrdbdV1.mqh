@@ -57,6 +57,35 @@ struct SRBRDBDArea
 };
 
 //+------------------------------------------------------------------+
+//| Struct for Roof and Floor Range Channel                          |
+//+------------------------------------------------------------------+
+struct SRoofFloorChannel
+{
+   bool              isValid;
+   double            roofPrice;        // Top border of DBD base (Distal of DBD)
+   double            floorPrice;       // Bottom border of RBR base (Distal of RBR)
+   double            medianPrice;      // (Roof + Floor) / 2
+   string            roofSource;       // "DBD", "SwingHigh (Fallback)", "ATH (Projected)"
+   string            floorSource;      // "RBR", "SwingLow (Fallback)", "ATL (Projected)"
+   datetime          startTime;        // Earliest relevant base start time
+   datetime          endTime;          // Future projection time
+   string            channelName;
+
+   void Init()
+   {
+      isValid     = false;
+      roofPrice   = 0.0;
+      floorPrice  = 0.0;
+      medianPrice = 0.0;
+      roofSource  = "";
+      floorSource = "";
+      startTime   = 0;
+      endTime     = 0;
+      channelName = "";
+   }
+};
+
+//+------------------------------------------------------------------+
 //| Struct for Timeframe Data                                        |
 //+------------------------------------------------------------------+
 struct STimeframeRBRDBDData
@@ -66,36 +95,50 @@ struct STimeframeRBRDBDData
    int               maxBaseCandles;
    double            minLegRatio;
    bool              drawEnabled;
+   bool              drawRoofFloor;
    color             rbrColor;
    color             dbdColor;
    color             usedColor;
    color             invalidColor;
+   color             roofColor;
+   color             floorColor;
+   color             channelBgColor;
    datetime          lastBarTime;
 
    SRBRDBDArea       areas[];
+   SRoofFloorChannel currentChannel;
 
    void Init(ENUM_TIMEFRAMES period, 
              int minBase = 1, 
              int maxBase = 7, 
              double legRatio = 1.0, 
              bool draw = true,
+             bool drawRF = true,
              color clrRBR = clrLimeGreen, 
              color clrDBD = clrCrimson,
              color clrUsed = clrSandyBrown,
-             color clrInvalid = clrGray)
+             color clrInvalid = clrGray,
+             color clrRoof = clrIndianRed,
+             color clrFloor = clrMediumSeaGreen,
+             color clrBg = C'20,30,45')
    {
       tf             = period;
       minBaseCandles = minBase;
       maxBaseCandles = maxBase;
       minLegRatio    = legRatio;
       drawEnabled    = draw;
+      drawRoofFloor  = drawRF;
       rbrColor       = clrRBR;
       dbdColor       = clrDBD;
       usedColor      = clrUsed;
       invalidColor   = clrInvalid;
+      roofColor      = clrRoof;
+      floorColor     = clrFloor;
+      channelBgColor = clrBg;
       lastBarTime    = 0;
 
       ArrayResize(areas, 0);
+      currentChannel.Init();
    }
 };
 
@@ -129,8 +172,11 @@ public:
                           const int maxBaseCandles = 7,
                           const double minLegRatio = 1.0,
                           const bool drawOnChart = true,
+                          const bool drawRoofFloor = true,
                           const color rbrColor = clrSeaGreen,
-                          const color dbdColor = clrIndianRed)
+                          const color dbdColor = clrIndianRed,
+                          const color roofColor = clrCrimson,
+                          const color floorColor = clrLimeGreen)
    {
       for(int i = 0; i < m_totalTFs; i++)
       {
@@ -140,8 +186,11 @@ public:
             m_tfList[i].maxBaseCandles = maxBaseCandles;
             m_tfList[i].minLegRatio    = minLegRatio;
             m_tfList[i].drawEnabled    = drawOnChart;
+            m_tfList[i].drawRoofFloor  = drawRoofFloor;
             m_tfList[i].rbrColor       = rbrColor;
             m_tfList[i].dbdColor       = dbdColor;
+            m_tfList[i].roofColor      = roofColor;
+            m_tfList[i].floorColor     = floorColor;
             return true;
          }
       }
@@ -153,9 +202,9 @@ public:
          return false;
       }
 
-      m_tfList[m_totalTFs - 1].Init(tf, minBaseCandles, maxBaseCandles, minLegRatio, drawOnChart, rbrColor, dbdColor);
-      PrintFormat("[CRBRDBDV1] Registered TF: %s (Base: %d~%d candles, Ratio: %.1f)", 
-                  EnumToString(tf), minBaseCandles, maxBaseCandles, minLegRatio);
+      m_tfList[m_totalTFs - 1].Init(tf, minBaseCandles, maxBaseCandles, minLegRatio, drawOnChart, drawRoofFloor, rbrColor, dbdColor, clrSandyBrown, clrGray, roofColor, floorColor);
+      PrintFormat("[CRBRDBDV1] Registered TF: %s (Base: %d~%d candles, Ratio: %.1f, RoofFloor: %s)", 
+                  EnumToString(tf), minBaseCandles, maxBaseCandles, minLegRatio, drawRoofFloor ? "true" : "false");
       return true;
    }
 
@@ -195,6 +244,14 @@ public:
             {
                DrawAllAreas(m_tfList[i]);
             }
+
+            // 4. Update and draw Roof & Floor Channel
+            if(m_tfList[i].drawRoofFloor)
+            {
+               double curPrice = SymbolInfoDouble(symbol, SYMBOL_BID);
+               CalculateRoofFloorChannel(symbol, m_tfList[i], curPrice);
+               DrawRoofFloorChannel(m_tfList[i]);
+            }
          }
       }
    }
@@ -225,6 +282,13 @@ public:
          if(changed && m_tfList[i].drawEnabled)
          {
             DrawAllAreas(m_tfList[i]);
+         }
+
+         if(m_tfList[i].drawRoofFloor)
+         {
+            double curPrice = (bid > 0) ? bid : ask;
+            CalculateRoofFloorChannel(symbol, m_tfList[i], curPrice);
+            DrawRoofFloorChannel(m_tfList[i]);
          }
       }
    }
@@ -270,6 +334,20 @@ public:
       {
          outArray[i] = m_tfList[idx].areas[i];
       }
+      return true;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Get Current Roof and Floor Channel for a timeframe               |
+   //+------------------------------------------------------------------+
+   bool GetRoofFloorChannel(const ENUM_TIMEFRAMES tf, SRoofFloorChannel &outChannel)
+   {
+      int idx = FindTFIndex(tf);
+      if(idx < 0) return false;
+
+      if(!m_tfList[idx].currentChannel.isValid) return false;
+
+      outChannel = m_tfList[idx].currentChannel;
       return true;
    }
 
@@ -324,6 +402,13 @@ private:
       if(data.drawEnabled)
       {
          DrawAllAreas(data);
+      }
+
+      if(data.drawRoofFloor)
+      {
+         double curPrice = SymbolInfoDouble(symbol, SYMBOL_BID);
+         CalculateRoofFloorChannel(symbol, data, curPrice);
+         DrawRoofFloorChannel(data);
       }
 
       PrintFormat("[CRBRDBDV1] InitHistory for %s: %d zones found (%d valid/active).",
@@ -612,5 +697,245 @@ private:
          ObjectSetInteger(0, textName, OBJPROP_FONTSIZE, 8);
          ObjectSetString(0, textName, OBJPROP_FONT, "Arial Bold");
       }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Calculate Roof & Floor with 3-Level Fallback Strategy            |
+   //+------------------------------------------------------------------+
+   void CalculateRoofFloorChannel(const string symbol, STimeframeRBRDBDData &data, const double currentPrice)
+   {
+      data.currentChannel.Init();
+      if(currentPrice <= 0.0) return;
+
+      int totalAreas = ArraySize(data.areas);
+
+      // --- 1. LEVEL 1: Search Nearest Valid DBD above price & RBR below price ---
+      double nearestRoofDBD   = DBL_MAX;
+      datetime nearestRoofTime = 0;
+
+      double nearestFloorRBR  = 0.0;
+      datetime nearestFloorTime = 0;
+
+      for(int i = 0; i < totalAreas; i++)
+      {
+         if(data.areas[i].isInvalid) continue;
+
+         // DBD (Supply) as Roof: base top border is Distal
+         if(data.areas[i].type == RBRDBD_DBD)
+         {
+            double dbdTop = data.areas[i].distal;
+            if(dbdTop >= currentPrice && dbdTop < nearestRoofDBD)
+            {
+               nearestRoofDBD   = dbdTop;
+               nearestRoofTime  = data.areas[i].baseStart;
+            }
+         }
+         // RBR (Demand) as Floor: base bottom border is Distal
+         else if(data.areas[i].type == RBRDBD_RBR)
+         {
+            double rbrBottom = data.areas[i].distal;
+            if(rbrBottom <= currentPrice && rbrBottom > nearestFloorRBR)
+            {
+               nearestFloorRBR   = rbrBottom;
+               nearestFloorTime  = data.areas[i].baseStart;
+            }
+         }
+      }
+
+      // --- Determine Roof ---
+      if(nearestRoofDBD < DBL_MAX)
+      {
+         data.currentChannel.roofPrice  = nearestRoofDBD;
+         data.currentChannel.roofSource = "DBD";
+         if(data.currentChannel.startTime == 0 || nearestRoofTime < data.currentChannel.startTime)
+            data.currentChannel.startTime = nearestRoofTime;
+      }
+      else
+      {
+         // --- LEVEL 2 Fallback: Nearest Swing High above current price ---
+         MqlRates rates[];
+         ArraySetAsSeries(rates, true);
+         int copied = CopyRates(symbol, data.tf, 0, 100, rates);
+
+         double swingHighAbove = DBL_MAX;
+         datetime shTime = 0;
+
+         if(copied >= 5)
+         {
+            for(int b = 2; b < copied - 2; b++)
+            {
+               if(rates[b].high > rates[b - 1].high && rates[b].high > rates[b + 1].high)
+               {
+                  if(rates[b].high > currentPrice && rates[b].high < swingHighAbove)
+                  {
+                     swingHighAbove = rates[b].high;
+                     shTime = rates[b].time;
+                  }
+               }
+            }
+         }
+
+         if(swingHighAbove < DBL_MAX)
+         {
+            data.currentChannel.roofPrice  = swingHighAbove;
+            data.currentChannel.roofSource = "SwingHigh (Fallback)";
+            if(data.currentChannel.startTime == 0 || shTime < data.currentChannel.startTime)
+               data.currentChannel.startTime = shTime;
+         }
+         else
+         {
+            // --- LEVEL 3 Fallback: ATH Condition (Dynamic Range / ATR Projection) ---
+            double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+            double defaultOffset = (point > 0) ? 200 * point : 2.0;
+
+            if(nearestFloorRBR > 0.0)
+               data.currentChannel.roofPrice = currentPrice + (currentPrice - nearestFloorRBR);
+            else
+               data.currentChannel.roofPrice = currentPrice + defaultOffset;
+
+            data.currentChannel.roofSource = "ATH (Projected)";
+         }
+      }
+
+      // --- Determine Floor ---
+      if(nearestFloorRBR > 0.0)
+      {
+         data.currentChannel.floorPrice  = nearestFloorRBR;
+         data.currentChannel.floorSource = "RBR";
+         if(data.currentChannel.startTime == 0 || nearestFloorTime < data.currentChannel.startTime)
+            data.currentChannel.startTime = nearestFloorTime;
+      }
+      else
+      {
+         // --- LEVEL 2 Fallback: Nearest Swing Low below current price ---
+         MqlRates rates[];
+         ArraySetAsSeries(rates, true);
+         int copied = CopyRates(symbol, data.tf, 0, 100, rates);
+
+         double swingLowBelow = 0.0;
+         datetime slTime = 0;
+
+         if(copied >= 5)
+         {
+            for(int b = 2; b < copied - 2; b++)
+            {
+               if(rates[b].low < rates[b - 1].low && rates[b].low < rates[b + 1].low)
+               {
+                  if(rates[b].low < currentPrice && rates[b].low > swingLowBelow)
+                  {
+                     swingLowBelow = rates[b].low;
+                     slTime = rates[b].time;
+                  }
+               }
+            }
+         }
+
+         if(swingLowBelow > 0.0)
+         {
+            data.currentChannel.floorPrice  = swingLowBelow;
+            data.currentChannel.floorSource = "SwingLow (Fallback)";
+            if(data.currentChannel.startTime == 0 || slTime < data.currentChannel.startTime)
+               data.currentChannel.startTime = slTime;
+         }
+         else
+         {
+            // --- LEVEL 3 Fallback: ATL Condition (Dynamic Range / ATR Projection) ---
+            double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+            double defaultOffset = (point > 0) ? 200 * point : 2.0;
+
+            if(data.currentChannel.roofPrice > currentPrice)
+               data.currentChannel.floorPrice = currentPrice - (data.currentChannel.roofPrice - currentPrice);
+            else
+               data.currentChannel.floorPrice = currentPrice - defaultOffset;
+
+            data.currentChannel.floorSource = "ATL (Projected)";
+         }
+      }
+
+      if(data.currentChannel.startTime == 0)
+         data.currentChannel.startTime = TimeCurrent() - (PeriodSeconds(data.tf) * 30);
+
+      data.currentChannel.endTime     = TimeCurrent() + (PeriodSeconds(data.tf) * 15);
+      data.currentChannel.medianPrice = (data.currentChannel.roofPrice + data.currentChannel.floorPrice) / 2.0;
+      data.currentChannel.isValid     = (data.currentChannel.roofPrice > data.currentChannel.floorPrice);
+      data.currentChannel.channelName = m_objPrefix + EnumToString(data.tf) + "_RoofFloor";
+   }
+
+   //+------------------------------------------------------------------+
+   //| Draw Roof & Floor Visual Range Box & Lines                       |
+   //+------------------------------------------------------------------+
+   void DrawRoofFloorChannel(STimeframeRBRDBDData &data)
+   {
+      if(!data.currentChannel.isValid) return;
+
+      string baseName  = data.currentChannel.channelName;
+      string boxName   = baseName + "_Box";
+      string roofLine  = baseName + "_RoofLine";
+      string floorLine = baseName + "_FloorLine";
+      string eqLine    = baseName + "_EqLine";
+      string labelName = baseName + "_Lbl";
+
+      datetime tStart = data.currentChannel.startTime;
+      datetime tEnd   = data.currentChannel.endTime;
+      double roofP    = data.currentChannel.roofPrice;
+      double floorP   = data.currentChannel.floorPrice;
+      double eqP      = data.currentChannel.medianPrice;
+
+      // 1. Draw Range Box
+      if(!ObjectCreate(0, boxName, OBJ_RECTANGLE, 0, tStart, roofP, tEnd, floorP))
+      {
+         ObjectMove(0, boxName, 0, tStart, roofP);
+         ObjectMove(0, boxName, 1, tEnd, floorP);
+      }
+      ObjectSetInteger(0, boxName, OBJPROP_COLOR, data.channelBgColor);
+      ObjectSetInteger(0, boxName, OBJPROP_FILL, true);
+      ObjectSetInteger(0, boxName, OBJPROP_BACK, true);
+      ObjectSetInteger(0, boxName, OBJPROP_SELECTABLE, false);
+
+      // 2. Draw Roof Line (Top Border)
+      if(!ObjectCreate(0, roofLine, OBJ_TREND, 0, tStart, roofP, tEnd, roofP))
+      {
+         ObjectMove(0, roofLine, 0, tStart, roofP);
+         ObjectMove(0, roofLine, 1, tEnd, roofP);
+      }
+      ObjectSetInteger(0, roofLine, OBJPROP_COLOR, data.roofColor);
+      ObjectSetInteger(0, roofLine, OBJPROP_WIDTH, 2);
+      ObjectSetInteger(0, roofLine, OBJPROP_STYLE, STYLE_SOLID);
+      ObjectSetInteger(0, roofLine, OBJPROP_RAY_RIGHT, false);
+
+      // 3. Draw Floor Line (Bottom Border)
+      if(!ObjectCreate(0, floorLine, OBJ_TREND, 0, tStart, floorP, tEnd, floorP))
+      {
+         ObjectMove(0, floorLine, 0, tStart, floorP);
+         ObjectMove(0, floorLine, 1, tEnd, floorP);
+      }
+      ObjectSetInteger(0, floorLine, OBJPROP_COLOR, data.floorColor);
+      ObjectSetInteger(0, floorLine, OBJPROP_WIDTH, 2);
+      ObjectSetInteger(0, floorLine, OBJPROP_STYLE, STYLE_SOLID);
+      ObjectSetInteger(0, floorLine, OBJPROP_RAY_RIGHT, false);
+
+      // 4. Draw Median Equilibrium (50%) Line
+      if(!ObjectCreate(0, eqLine, OBJ_TREND, 0, tStart, eqP, tEnd, eqP))
+      {
+         ObjectMove(0, eqLine, 0, tStart, eqP);
+         ObjectMove(0, eqLine, 1, tEnd, eqP);
+      }
+      ObjectSetInteger(0, eqLine, OBJPROP_COLOR, clrDarkGray);
+      ObjectSetInteger(0, eqLine, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, eqLine, OBJPROP_STYLE, STYLE_DOT);
+      ObjectSetInteger(0, eqLine, OBJPROP_RAY_RIGHT, false);
+
+      // 5. Draw Label Text on Top Right / Left
+      if(!ObjectCreate(0, labelName, OBJ_TEXT, 0, tStart, roofP))
+      {
+         ObjectMove(0, labelName, 0, tStart, roofP);
+      }
+      string txt = StringFormat(" [%s Range] Roof: %.5f (%s) | Floor: %.5f (%s) | Eq: %.5f",
+                                EnumToString(data.tf), roofP, data.currentChannel.roofSource,
+                                floorP, data.currentChannel.floorSource, eqP);
+      ObjectSetString(0, labelName, OBJPROP_TEXT, txt);
+      ObjectSetInteger(0, labelName, OBJPROP_COLOR, clrWhiteSmoke);
+      ObjectSetInteger(0, labelName, OBJPROP_FONTSIZE, 9);
+      ObjectSetString(0, labelName, OBJPROP_FONT, "Arial Bold");
    }
 };

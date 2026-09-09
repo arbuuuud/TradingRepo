@@ -22,16 +22,20 @@ input int               InpMinBaseM3         = 1;               // M3 Min Base C
 input int               InpMaxBaseM3         = 5;               // M3 Max Base Candles (1~9)
 input double            InpLegRatioM3        = 1.0;             // M3 Min Leg-Out vs Base Ratio
 input bool              InpDrawM3            = true;            // Draw M3 on Chart
+input bool              InpDrawRoofFloorM3   = true;            // Draw Roof & Floor Channel M3
 
 input bool              InpEnableM15         = false;           // Enable M15 Detection
 input int               InpMinBaseM15        = 1;               // M15 Min Base Candles (1~9)
 input int               InpMaxBaseM15        = 7;               // M15 Max Base Candles (1~9)
 input double            InpLegRatioM15       = 1.0;             // M15 Min Leg-Out vs Base Ratio
 input bool              InpDrawM15           = false;           // Draw M15 on Chart
+input bool              InpDrawRoofFloorM15  = false;           // Draw Roof & Floor Channel M15
 
 input group "=== Visual Colors ==="
 input color             InpColorRBR          = clrMediumSeaGreen; // Fresh RBR (Demand)
 input color             InpColorDBD          = clrCrimson;        // Fresh DBD (Supply)
+input color             InpColorRoof         = clrIndianRed;      // Roof Top Border
+input color             InpColorFloor        = clrLimeGreen;      // Floor Bottom Border
 
 input group "=== History Scanning ==="
 input int               InpHistoryBars       = 500;             // History Bars to Scan on Init
@@ -51,12 +55,12 @@ int OnInit()
    // 1. Register selective timeframes (PeriodList)
    if(InpEnableM3)
    {
-      ExtRBRDBD.RegisterTimeframe(PERIOD_M3, InpMinBaseM3, InpMaxBaseM3, InpLegRatioM3, InpDrawM3, InpColorRBR, InpColorDBD);
+      ExtRBRDBD.RegisterTimeframe(PERIOD_M3, InpMinBaseM3, InpMaxBaseM3, InpLegRatioM3, InpDrawM3, InpDrawRoofFloorM3, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
    }
 
    if(InpEnableM15)
    {
-      ExtRBRDBD.RegisterTimeframe(PERIOD_M15, InpMinBaseM15, InpMaxBaseM15, InpLegRatioM15, InpDrawM15, InpColorRBR, InpColorDBD);
+      ExtRBRDBD.RegisterTimeframe(PERIOD_M15, InpMinBaseM15, InpMaxBaseM15, InpLegRatioM15, InpDrawM15, InpDrawRoofFloorM15, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
    }
 
    // 2. Scan historical bars and track past & current consumption
