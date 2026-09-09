@@ -78,6 +78,28 @@ double g_placedSellPrices[];
 double g_lastChannelRoof  = 0.0;
 double g_lastChannelFloor = 0.0;
 datetime g_lastM3BarTime  = 0;
+int g_completedTPBatchIds[];
+
+//+------------------------------------------------------------------+
+//| Helper: Check if batch already completed TP                      |
+//+------------------------------------------------------------------+
+bool IsBatchTPCompleted(const int batchId)
+{
+   if(batchId <= 0) return false;
+   for(int i = 0; i < ArraySize(g_completedTPBatchIds); i++)
+   {
+      if(g_completedTPBatchIds[i] == batchId) return true;
+   }
+   return false;
+}
+
+void MarkBatchTPCompleted(const int batchId)
+{
+   if(batchId <= 0 || IsBatchTPCompleted(batchId)) return;
+   int sz = ArraySize(g_completedTPBatchIds);
+   ArrayResize(g_completedTPBatchIds, sz + 1);
+   g_completedTPBatchIds[sz] = batchId;
+}
 
 //+------------------------------------------------------------------+
 //| Forward Declarations                                             |
@@ -130,6 +152,7 @@ int OnInit()
 
    ArrayResize(g_placedBuyPrices, 0);
    ArrayResize(g_placedSellPrices, 0);
+   ArrayResize(g_completedTPBatchIds, 0);
 
    PrintFormat("[arbudlogicv1] Init Succeeded on %s (Main TF: M3). Grid Size: %d", _Symbol, InpMaxEntry);
    return INIT_SUCCEEDED;
@@ -257,6 +280,12 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
       }
    }
 
+   // Kunci Batch jika sudah pernah selesai TP (Tidak boleh order ulang)
+   if(IsBatchTPCompleted(channel.batchId))
+   {
+      return;
+   }
+
    // ---------------------------------------------------------------
    // A. BUY LIMIT GRID IN BUY AREA (0% - 25%)
    // ---------------------------------------------------------------
@@ -266,6 +295,10 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
       double buyAreaTop = channel.levelBuyBoundary; // 25%
       double buyAreaBot = channel.floorPrice;       // 0%
       double step = (InpMaxEntry > 1) ? (buyAreaTop - buyAreaBot) / (InpMaxEntry - 1) : 0.0;
+
+      // Batas penetrasi harga yang sudah ditembus (breached depth)
+      // Level harga di atas atau sama dengan batas penetrasi ini SUDAH PERNAH DILEWATI/TERPAKAI!
+      double breachedBuyDepth = buyAreaTop - ((channel.buyAreaUsedPct / 100.0) * (buyAreaTop - buyAreaBot));
 
       // Hard SL Calculation (30% dari total area / range di luar Floor)
       double slPriceRaw = channel.floorPrice - (range * (InpHardSLPercent / 100.0));
@@ -282,7 +315,12 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
 
          // Aturan 2: Price saat ini harus masih berada DI ATAS gridPrice (Buy Limit valid)
          if(curAsk <= gridPrice)
-            continue; // Sudah tersentuh / harga sudah di bawahnya, jangan pasang lagi!
+            continue;
+
+         // Aturan 3 (Anti-Reorder Breached Area):
+         // Jangan pasang jika titik grid ini sudah berada di dalam zona yang pernah ditembus (breached)
+         if(channel.buyAreaUsedPct > 0.0 && gridPrice >= (breachedBuyDepth - tol))
+            continue; // Level ini sudah pernah ditembus/dipakai, DILARANG order lagi!
 
          string comment = StringFormat("B%d_BL%d", channel.batchId, i);
          if(ExtTrade.BuyLimit(InpStaticLot, gridPrice, symbol, slPrice, tpPrice, ORDER_TIME_GTC, 0, comment))
@@ -304,6 +342,10 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
       double sellAreaTop = channel.roofPrice;         // 100%
       double step = (InpMaxEntry > 1) ? (sellAreaTop - sellAreaBot) / (InpMaxEntry - 1) : 0.0;
 
+      // Batas penetrasi harga yang sudah ditembus (breached depth)
+      // Level harga di bawah atau sama dengan batas penetrasi ini SUDAH PERNAH DILEWATI/TERPAKAI!
+      double breachedSellDepth = sellAreaBot + ((channel.sellAreaUsedPct / 100.0) * (sellAreaTop - sellAreaBot));
+
       // Hard SL Calculation (30% dari total area / range di luar Roof)
       double slPriceRaw = channel.roofPrice + (range * (InpHardSLPercent / 100.0));
       double slPrice = NormalizeDouble(slPriceRaw, digits);
@@ -319,7 +361,12 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
 
          // Aturan 2: Price saat ini harus masih berada DI BAWAH gridPrice (Sell Limit valid)
          if(curBid >= gridPrice)
-            continue; // Sudah tersentuh / harga sudah di atasnya, jangan pasang lagi!
+            continue;
+
+         // Aturan 3 (Anti-Reorder Breached Area):
+         // Jangan pasang jika titik grid ini sudah berada di dalam zona yang pernah ditembus (breached)
+         if(channel.sellAreaUsedPct > 0.0 && gridPrice <= (breachedSellDepth + tol))
+            continue; // Level ini sudah pernah ditembus/dipakai, DILARANG order lagi!
 
          string comment = StringFormat("B%d_SL%d", channel.batchId, i);
          if(ExtTrade.SellLimit(InpStaticLot, gridPrice, symbol, slPrice, tpPrice, ORDER_TIME_GTC, 0, comment))
@@ -785,12 +832,18 @@ void CheckStandardTPClosedOrders()
          }
       }
 
-      // Aturan: Jika sudah ada posisi TP, posisi terbuka sudah 0 (bersih), dan masih ada pending order tersisa -> HAPUS!
-      if(activePosCount == 0 && pendingOrderCount > 0)
+      // Aturan: Jika sudah ada posisi TP dan posisi terbuka sudah 0 (bersih)
+      if(activePosCount == 0)
       {
-         PrintFormat("[Cleanup] Batch B%d hit TP and all positions closed (0 active). Cancelling %d remaining pending limit orders!",
-                     bId, pendingOrderCount);
-         CancelPendingOrdersByBatch(bId, "Batch hit TP and all open positions closed");
+         // Tandai batch ini sebagai completed agar tidak pernah dipasangi order lagi
+         MarkBatchTPCompleted(bId);
+
+         if(pendingOrderCount > 0)
+         {
+            PrintFormat("[Cleanup] Batch B%d hit TP and all positions closed (0 active). Cancelling %d remaining pending limit orders!",
+                        bId, pendingOrderCount);
+            CancelPendingOrdersByBatch(bId, "Batch hit TP and all open positions closed");
+         }
       }
    }
 }
