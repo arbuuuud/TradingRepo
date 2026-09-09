@@ -17,6 +17,13 @@
 //| Inputs                                                           |
 //+------------------------------------------------------------------+
 input group "=== Timeframe Selection (PeriodList) ==="
+input bool              InpEnableM1          = true;            // Enable M1 Detection
+input int               InpMinBaseM1         = 1;               // M1 Min Base Candles (1~9)
+input int               InpMaxBaseM1         = 5;               // M1 Max Base Candles (1~9)
+input double            InpLegRatioM1        = 1.0;             // M1 Min Leg-Out vs Base Ratio
+input bool              InpDrawM1            = true;            // Draw M1 on Chart
+input bool              InpDrawRoofFloorM1   = false;           // Draw Roof & Floor Channel M1
+
 input bool              InpEnableM3          = true;            // Enable M3 Detection
 input int               InpMinBaseM3         = 1;               // M3 Min Base Candles (1~9)
 input int               InpMaxBaseM3         = 5;               // M3 Max Base Candles (1~9)
@@ -24,11 +31,11 @@ input double            InpLegRatioM3        = 1.0;             // M3 Min Leg-Ou
 input bool              InpDrawM3            = true;            // Draw M3 on Chart
 input bool              InpDrawRoofFloorM3   = true;            // Draw Roof & Floor Channel M3
 
-input bool              InpEnableM15         = false;           // Enable M15 Detection
+input bool              InpEnableM15         = true;            // Enable M15 Detection
 input int               InpMinBaseM15        = 1;               // M15 Min Base Candles (1~9)
 input int               InpMaxBaseM15        = 7;               // M15 Max Base Candles (1~9)
 input double            InpLegRatioM15       = 1.0;             // M15 Min Leg-Out vs Base Ratio
-input bool              InpDrawM15           = false;           // Draw M15 on Chart
+input bool              InpDrawM15           = true;            // Draw M15 on Chart
 input bool              InpDrawRoofFloorM15  = false;           // Draw Roof & Floor Channel M15
 
 input group "=== Visual Colors ==="
@@ -53,6 +60,11 @@ int OnInit()
    Print("=== [rbrdbdV1Sample] Initializing EA ===");
 
    // 1. Register selective timeframes (PeriodList)
+   if(InpEnableM1)
+   {
+      ExtRBRDBD.RegisterTimeframe(PERIOD_M1, InpMinBaseM1, InpMaxBaseM1, InpLegRatioM1, InpDrawM1, InpDrawRoofFloorM1, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
+   }
+
    if(InpEnableM3)
    {
       ExtRBRDBD.RegisterTimeframe(PERIOD_M3, InpMinBaseM3, InpMaxBaseM3, InpLegRatioM3, InpDrawM3, InpDrawRoofFloorM3, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
@@ -66,8 +78,11 @@ int OnInit()
    // 2. Scan historical bars and track past & current consumption
    ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars);
 
-   PrintFormat("[rbrdbdV1Sample] Initialized on %s. Active M3 zones: %d", 
-               _Symbol, ExtRBRDBD.GetValidAreasCount(PERIOD_M3));
+   PrintFormat("[rbrdbdV1Sample] Initialized on %s. Active zones -> M1: %d, M3: %d, M15: %d", 
+               _Symbol, 
+               ExtRBRDBD.GetValidAreasCount(PERIOD_M1),
+               ExtRBRDBD.GetValidAreasCount(PERIOD_M3),
+               ExtRBRDBD.GetValidAreasCount(PERIOD_M15));
 
    return INIT_SUCCEEDED;
 }
