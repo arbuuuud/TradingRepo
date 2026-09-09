@@ -504,16 +504,38 @@ private:
 
       // Determine Trend from latest confirmed swings
       // User rule:
-      // Bullish: HH-HL atau HL-HH
-      // Bearish: LL-HL atau HL-LL (serta LL-LH / LH-LL)
+      // Bullish: HH-HL atau HL-HH atau tidak ada LL yang terbentuk di N swing terakhir
+      // Bearish: LL-HL atau HL-LL (serta LL-LH/LH-LL) atau tidak ada HH yang terbentuk di N swing terakhir
       string s1 = data.structures[size - 1].label; // Latest
       string s2 = data.structures[size - 2].label; // Previous
 
+      // Check N recent swings (window 4-6 swings) for presence of LL or HH
+      int checkWindow = MathMin(6, size);
+      bool hasRecentLL = false;
+      bool hasRecentHH = false;
+      for(int w = size - 1; w >= size - checkWindow; w--)
+      {
+         if(data.structures[w].label == "LL") hasRecentLL = true;
+         if(data.structures[w].label == "HH") hasRecentHH = true;
+      }
+
       if((s2 == "HH" && s1 == "HL") || (s2 == "HL" && s1 == "HH"))
+      {
          data.trend = STR_TREND_BULL;
+      }
       else if((s2 == "LL" && s1 == "HL") || (s2 == "HL" && s1 == "LL") ||
               (s2 == "LL" && s1 == "LH") || (s2 == "LH" && s1 == "LL"))
+      {
          data.trend = STR_TREND_BEAR;
+      }
+      else if(!hasRecentLL && hasRecentHH)
+      {
+         data.trend = STR_TREND_BULL; // Bullish: tidak ada LL terbentuk di N swing terakhir
+      }
+      else if(!hasRecentHH && hasRecentLL)
+      {
+         data.trend = STR_TREND_BEAR; // Bearish: tidak ada HH terbentuk di N swing terakhir
+      }
    }
 
    //+------------------------------------------------------------------+
