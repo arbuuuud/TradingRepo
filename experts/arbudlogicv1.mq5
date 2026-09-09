@@ -37,27 +37,27 @@ input double            InpSmartTPThreshold  = 75.0;            // Threshold % t
 input int               InpDefaultSpreadPoints = 35;            // Default Spread Points for Smart TP buffer (Min profit = 2x spread)
 
 input group "=== Candle Close SL Settings ==="
-input bool              InpUseCandleCloseSL  = true;            // Cutloss on M1 Candle Close in 15%-30% outer zone
-input double            InpCloseZoneMinPct   = 15.0;            // Min % outside Floor/Roof for M1 Close SL (Default: 15%)
-input double            InpCloseZoneMaxPct   = 30.0;            // Max % outside Floor/Roof for M1 Close SL (Default: 30%)
+input bool              InpUseCandleCloseSL  = true;            // Cutloss on M3 Candle Close in 15%-30% outer zone
+input double            InpCloseZoneMinPct   = 15.0;            // Min % outside Floor/Roof for M3 Close SL (Default: 15%)
+input double            InpCloseZoneMaxPct   = 30.0;            // Max % outside Floor/Roof for M3 Close SL (Default: 30%)
 
 input group "=== Equilibrium (M3 Structure) Settings ==="
 input bool              InpEnableEquilibrium = true;            // Filter Buy in Discount (<50%) & Sell in Premium (>50%)
 input int               InpM3Lookback        = 3;               // M3 confirmed structures lookback count (2-3)
 
-input group "=== M1 Structure Settings ==="
-input bool              InpEnableStructM1    = true;            // Enable M1 Structure Detection
-input bool              InpDrawStructM1      = true;            // Draw M1 Structure on Chart
-input color             InpColorStructM1     = clrDodgerBlue;   // M1 Structure Line Color
-input int               InpWidthStructM1     = 1;               // M1 Structure Line Width
+input group "=== M3 Structure Settings ==="
+input bool              InpEnableStructM3    = true;            // Enable M3 Structure Detection
+input bool              InpDrawStructM3      = true;            // Draw M3 Structure on Chart
+input color             InpColorStructM3     = clrDodgerBlue;   // M3 Structure Line Color
+input int               InpWidthStructM3     = 1;               // M3 Structure Line Width
 
-input group "=== M1 RBR / DBD Settings ==="
-input bool              InpEnableRbrDbdM1    = true;            // Enable M1 RBR/DBD Detection
-input bool              InpDrawRbrDbdM1      = true;            // Draw M1 RBR/DBD Rectangles on Chart
-input bool              InpDrawRoofFloorM1   = true;            // Draw M1 Transaction Areas (Floor/Roof)
-input int               InpMinBaseM1         = 1;               // M1 Min Base Candles (1~9)
-input int               InpMaxBaseM1         = 5;               // M1 Max Base Candles (1~9)
-input double            InpLegRatioM1        = 1.0;             // M1 Min Leg-Out vs Base Ratio
+input group "=== M3 RBR / DBD Settings ==="
+input bool              InpEnableRbrDbdM3    = true;            // Enable M3 RBR/DBD Detection
+input bool              InpDrawRbrDbdM3      = true;            // Draw M3 RBR/DBD Rectangles on Chart
+input bool              InpDrawRoofFloorM3   = true;            // Draw M3 Transaction Areas (Floor/Roof)
+input int               InpMinBaseM3         = 1;               // M3 Min Base Candles (1~9)
+input int               InpMaxBaseM3         = 5;               // M3 Max Base Candles (1~9)
+input double            InpLegRatioM3        = 1.0;             // M3 Min Leg-Out vs Base Ratio
 
 input group "=== Visual Colors ==="
 input color             InpColorRBR          = clrMediumSeaGreen; // Fresh RBR (Demand)
@@ -77,7 +77,7 @@ double g_placedBuyPrices[];
 double g_placedSellPrices[];
 double g_lastChannelRoof  = 0.0;
 double g_lastChannelFloor = 0.0;
-datetime g_lastM1BarTime  = 0;
+datetime g_lastM3BarTime  = 0;
 
 //+------------------------------------------------------------------+
 //| Forward Declarations                                             |
@@ -98,7 +98,7 @@ void AddPlacedPrice(const double price, double &placedArray[]);
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   Print("=== [arbudlogicv1] Initializing EA with Grid & Smart TP (Main TF: M1) ===");
+   Print("=== [arbudlogicv1] Initializing EA with Grid & Smart TP (Main TF: M3) ===");
 
    if(InpMaxEntry < 2)
    {
@@ -111,16 +111,16 @@ int OnInit()
    ExtTrade.SetDeviationInPoints(InpSlippagePoints);
    ExtTrade.SetTypeFillingBySymbol(_Symbol);
 
-   // 2. Structure Registration (M1 - Active & Drawn, M3/M15/H1 background for fallback)
-   ExtStructure.RegisterTimeframe(PERIOD_M1,  InpColorStructM1, InpWidthStructM1, InpDrawStructM1);
-   ExtStructure.RegisterTimeframe(PERIOD_M3,  clrDodgerBlue,    1, false);
+   // 2. Structure Registration (M3 - Active & Drawn, M15/H1 background for fallback)
+   ExtStructure.RegisterTimeframe(PERIOD_M1,  clrDarkGray,      1, false);
+   ExtStructure.RegisterTimeframe(PERIOD_M3,  InpColorStructM3, InpWidthStructM3, InpDrawStructM3);
    ExtStructure.RegisterTimeframe(PERIOD_M15, clrGold,          1, false);
    ExtStructure.RegisterTimeframe(PERIOD_H1,  clrOrange,        1, false);
 
-   // 3. RBR / DBD Registration (M1 - Active & Drawn, M3/M15/H1 background for fallback)
-   ExtRBRDBD.RegisterTimeframe(PERIOD_M1,  InpMinBaseM1, InpMaxBaseM1, InpLegRatioM1, 
-                               InpDrawRbrDbdM1, InpDrawRoofFloorM1, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
-   ExtRBRDBD.RegisterTimeframe(PERIOD_M3,  1, 5, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
+   // 3. RBR / DBD Registration (M3 - Active & Drawn, M15/H1 background for fallback)
+   ExtRBRDBD.RegisterTimeframe(PERIOD_M1,  1, 5, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
+   ExtRBRDBD.RegisterTimeframe(PERIOD_M3,  InpMinBaseM3, InpMaxBaseM3, InpLegRatioM3, 
+                               InpDrawRbrDbdM3, InpDrawRoofFloorM3, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
    ExtRBRDBD.RegisterTimeframe(PERIOD_M15, 1, 7, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
    ExtRBRDBD.RegisterTimeframe(PERIOD_H1,  1, 7, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
 
@@ -131,7 +131,7 @@ int OnInit()
    ArrayResize(g_placedBuyPrices, 0);
    ArrayResize(g_placedSellPrices, 0);
 
-   PrintFormat("[arbudlogicv1] Init Succeeded on %s (Main TF: M1). Grid Size: %d", _Symbol, InpMaxEntry);
+   PrintFormat("[arbudlogicv1] Init Succeeded on %s (Main TF: M3). Grid Size: %d", _Symbol, InpMaxEntry);
    return INIT_SUCCEEDED;
 }
 
@@ -160,9 +160,9 @@ void OnTick()
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    ExtRBRDBD.UpdateConsumptionOnTick(_Symbol, bid, ask, &ExtStructure);
 
-   // 3. Fetch current M1 Transaction Area Channel
+   // 3. Fetch current M3 Transaction Area Channel
    SRoofFloorChannel channel;
-   bool hasChannel = ExtRBRDBD.GetRoofFloorChannel(PERIOD_M1, channel);
+   bool hasChannel = ExtRBRDBD.GetRoofFloorChannel(PERIOD_M3, channel);
 
    // Jika channel invalid (misal candle close tembus Stop Area), bersihkan pending orders
    if(!hasChannel || !channel.isValid)
@@ -502,7 +502,7 @@ void ManageSmartTP(const string symbol, const SRoofFloorChannel &currentChannel,
 
       if(posBatchId > 0)
       {
-         found = ExtRBRDBD.GetChannelByBatchId(PERIOD_M1, posBatchId, targetChannel);
+         found = ExtRBRDBD.GetChannelByBatchId(PERIOD_M3, posBatchId, targetChannel);
       }
 
       // Fallback to current channel if not found in history
@@ -551,12 +551,12 @@ void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentCha
 {
    if(!InpUseCandleCloseSL) return;
 
-   // Check if a new M1 candle just opened (meaning bar 1 just completed its close)
-   datetime curM1Time = iTime(symbol, PERIOD_M1, 0);
-   if(curM1Time == 0 || curM1Time == g_lastM1BarTime) return;
-   g_lastM1BarTime = curM1Time;
+   // Check if a new M3 candle just opened (meaning bar 1 just completed its close)
+   datetime curM3Time = iTime(symbol, PERIOD_M3, 0);
+   if(curM3Time == 0 || curM3Time == g_lastM3BarTime) return;
+   g_lastM3BarTime = curM3Time;
 
-   double close1 = iClose(symbol, PERIOD_M1, 1);
+   double close1 = iClose(symbol, PERIOD_M3, 1);
    if(close1 <= 0.0) return;
 
    for(int i = PositionsTotal() - 1; i >= 0; i--)
@@ -584,7 +584,7 @@ void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentCha
       SRoofFloorChannel targetChannel;
       bool found = false;
       if(posBatchId > 0)
-         found = ExtRBRDBD.GetChannelByBatchId(PERIOD_M1, posBatchId, targetChannel);
+         found = ExtRBRDBD.GetChannelByBatchId(PERIOD_M3, posBatchId, targetChannel);
       if(!found)
          targetChannel = currentChannel;
 
@@ -600,10 +600,10 @@ void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentCha
 
          if(close1 <= buyCloseZoneTop && close1 >= buyCloseZoneBot)
          {
-            PrintFormat("[CandleClose SL] BUY #%I64u (%s) closed! M1 Close[1] %.5f is in 15%%-30%% outer zone (%.5f - %.5f) [Batch %d]",
+            PrintFormat("[CandleClose SL] BUY #%I64u (%s) closed! M3 Close[1] %.5f is in 15%%-30%% outer zone (%.5f - %.5f) [Batch %d]",
                         ticket, posComment, close1, buyCloseZoneTop, buyCloseZoneBot, targetChannel.batchId);
             ExtTrade.PositionClose(ticket);
-            CancelPendingOrdersByBatch(targetChannel.batchId, "M1 Candle Closed in 15%-30% Outer Zone (SL)");
+            CancelPendingOrdersByBatch(targetChannel.batchId, "M3 Candle Closed in 15%-30% Outer Zone (SL)");
          }
       }
       // SELL Invalidation: Candle Close 1 berada di zona luar 15% - 30% di atas Roof
@@ -616,10 +616,10 @@ void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentCha
 
          if(close1 >= sellCloseZoneBot && close1 <= sellCloseZoneTop)
          {
-            PrintFormat("[CandleClose SL] SELL #%I64u (%s) closed! M1 Close[1] %.5f is in 15%%-30%% outer zone (%.5f - %.5f) [Batch %d]",
+            PrintFormat("[CandleClose SL] SELL #%I64u (%s) closed! M3 Close[1] %.5f is in 15%%-30%% outer zone (%.5f - %.5f) [Batch %d]",
                         ticket, posComment, close1, sellCloseZoneBot, sellCloseZoneTop, targetChannel.batchId);
             ExtTrade.PositionClose(ticket);
-            CancelPendingOrdersByBatch(targetChannel.batchId, "M1 Candle Closed in 15%-30% Outer Zone (SL)");
+            CancelPendingOrdersByBatch(targetChannel.batchId, "M3 Candle Closed in 15%-30% Outer Zone (SL)");
          }
       }
    }
@@ -726,7 +726,7 @@ void CheckStandardTPClosedOrders()
 
       // Get channel object for this batch
       SRoofFloorChannel batchChannel;
-      if(ExtRBRDBD.GetChannelByBatchId(PERIOD_M1, posBatchId, batchChannel))
+      if(ExtRBRDBD.GetChannelByBatchId(PERIOD_M3, posBatchId, batchChannel))
       {
          ENUM_DEAL_TYPE dealType = (ENUM_DEAL_TYPE)HistoryDealGetInteger(ticket, DEAL_TYPE);
          // Deal BUY means it closed a SELL position, Deal SELL means it closed a BUY position
