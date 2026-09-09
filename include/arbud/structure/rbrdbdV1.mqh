@@ -803,6 +803,9 @@ private:
          for(int a = 0; a < ArraySize(m_tfList[currentTFIndex].areas); a++)
          {
             if(m_tfList[currentTFIndex].areas[a].isInvalid) continue;
+            // PAC: Jangan gunakan DBD yang sudah exhausted/consumed >= 75%
+            if(m_tfList[currentTFIndex].areas[a].consumptionPct >= 75.0) continue;
+
             if(m_tfList[currentTFIndex].areas[a].type == RBRDBD_DBD)
             {
                double top = m_tfList[currentTFIndex].areas[a].distal;
@@ -829,6 +832,9 @@ private:
          for(int a = 0; a < ArraySize(m_tfList[higherTFIndex].areas); a++)
          {
             if(m_tfList[higherTFIndex].areas[a].isInvalid) continue;
+            // PAC: Jangan gunakan DBD higher TF yang sudah exhausted/consumed >= 75%
+            if(m_tfList[higherTFIndex].areas[a].consumptionPct >= 75.0) continue;
+
             if(m_tfList[higherTFIndex].areas[a].type == RBRDBD_DBD)
             {
                double top = m_tfList[higherTFIndex].areas[a].distal;
@@ -890,6 +896,9 @@ private:
          for(int a = 0; a < ArraySize(m_tfList[currentTFIndex].areas); a++)
          {
             if(m_tfList[currentTFIndex].areas[a].isInvalid) continue;
+            // PAC: Jangan gunakan RBR yang sudah exhausted/consumed >= 75%
+            if(m_tfList[currentTFIndex].areas[a].consumptionPct >= 75.0) continue;
+
             if(m_tfList[currentTFIndex].areas[a].type == RBRDBD_RBR)
             {
                double bottom = m_tfList[currentTFIndex].areas[a].distal;
@@ -916,6 +925,9 @@ private:
          for(int a = 0; a < ArraySize(m_tfList[higherTFIndex].areas); a++)
          {
             if(m_tfList[higherTFIndex].areas[a].isInvalid) continue;
+            // PAC: Jangan gunakan RBR higher TF yang sudah exhausted/consumed >= 75%
+            if(m_tfList[higherTFIndex].areas[a].consumptionPct >= 75.0) continue;
+
             if(m_tfList[higherTFIndex].areas[a].type == RBRDBD_RBR)
             {
                double bottom = m_tfList[higherTFIndex].areas[a].distal;

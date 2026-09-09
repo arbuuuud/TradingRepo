@@ -289,8 +289,8 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
    // ---------------------------------------------------------------
    // A. BUY LIMIT GRID IN BUY AREA (0% - 25%)
    // ---------------------------------------------------------------
-   // Syarat: Buy diizinkan dan Buy Area belum 100% used
-   if(allowBuy && channel.buyAreaUsedPct < 100.0)
+   // Syarat: Buy diizinkan dan Buy Area belum exhausted (< 75% used)
+   if(allowBuy && channel.buyAreaUsedPct < InpSmartTPThreshold)
    {
       double buyAreaTop = channel.levelBuyBoundary; // 25%
       double buyAreaBot = channel.floorPrice;       // 0%
@@ -335,8 +335,8 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
    // ---------------------------------------------------------------
    // B. SELL LIMIT GRID IN SELL AREA (75% - 100%)
    // ---------------------------------------------------------------
-   // Syarat: Sell diizinkan dan Sell Area belum 100% used
-   if(allowSell && channel.sellAreaUsedPct < 100.0)
+   // Syarat: Sell diizinkan dan Sell Area belum exhausted (< 75% used)
+   if(allowSell && channel.sellAreaUsedPct < InpSmartTPThreshold)
    {
       double sellAreaBot = channel.levelSellBoundary; // 75%
       double sellAreaTop = channel.roofPrice;         // 100%
