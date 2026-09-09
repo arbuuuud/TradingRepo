@@ -1113,9 +1113,10 @@ private:
    //+------------------------------------------------------------------+
    ENUM_TIMEFRAMES GetNextHigherTF(const ENUM_TIMEFRAMES tf)
    {
-      // Known ladder: M1 -> M3 -> M15 -> H1
+      // Known ladder: M1 -> M3 -> M5 -> M15 -> H1
       if(tf == PERIOD_M1)  return PERIOD_M3;
-      if(tf == PERIOD_M3)  return PERIOD_M15;
+      if(tf == PERIOD_M3)  return PERIOD_M5;
+      if(tf == PERIOD_M5)  return PERIOD_M15;
       if(tf == PERIOD_M15) return PERIOD_H1;
       return PERIOD_CURRENT; // No higher TF defined beyond H1
    }

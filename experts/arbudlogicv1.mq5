@@ -133,17 +133,17 @@ int OnInit()
    ExtTrade.SetDeviationInPoints(InpSlippagePoints);
    ExtTrade.SetTypeFillingBySymbol(_Symbol);
 
-   // 2. Structure Registration (M3 - Active & Drawn, M15/H1 background for fallback)
+   // 2. Structure Registration (M3 - Active & Drawn, M5/H1 background for fallback)
    ExtStructure.RegisterTimeframe(PERIOD_M1,  clrDarkGray,      1, false);
    ExtStructure.RegisterTimeframe(PERIOD_M3,  InpColorStructM3, InpWidthStructM3, InpDrawStructM3);
-   ExtStructure.RegisterTimeframe(PERIOD_M15, clrGold,          1, false);
+   ExtStructure.RegisterTimeframe(PERIOD_M5,   clrGold,          1, false);
    ExtStructure.RegisterTimeframe(PERIOD_H1,  clrOrange,        1, false);
 
-   // 3. RBR / DBD Registration (M3 - Active & Drawn, M15/H1 background for fallback)
+   // 3. RBR / DBD Registration (M3 - Active & Drawn, M5/H1 background for fallback)
    ExtRBRDBD.RegisterTimeframe(PERIOD_M1,  1, 5, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
    ExtRBRDBD.RegisterTimeframe(PERIOD_M3,  InpMinBaseM3, InpMaxBaseM3, InpLegRatioM3, 
                                InpDrawRbrDbdM3, InpDrawRoofFloorM3, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
-   ExtRBRDBD.RegisterTimeframe(PERIOD_M15, 1, 7, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
+   ExtRBRDBD.RegisterTimeframe(PERIOD_M5,  1, 5, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
    ExtRBRDBD.RegisterTimeframe(PERIOD_H1,  1, 7, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
 
    // 4. Scan History on Init
