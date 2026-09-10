@@ -41,7 +41,7 @@ input group "=== Cut Profit & Safety Exit Settings (Dual Guard) ==="
 input bool              InpEnableTieredExit     = true;         // Enable Tiered TP (Level 15%/85% when area >= 50%)
 input double            InpTieredAreaThreshold  = 50.0;         // Area used % to trigger Tiered TP (Default: 50%)
 input bool              InpEnableM1ReversalExit = true;         // Enable M1 Reversal Cut Profit when basket is in profit
-input int               InpMinPosForM1Exit      = 5;            // Min active positions to evaluate M1 reversal exit (>= 50% grid)
+input int               InpMinPosForM1Exit      = 1;            // Min active positions to evaluate M1 reversal exit (>= 1 position)
 input double            InpPinbarWickRatio      = 0.60;         // Min wick ratio for Pinbar/Hammer rejection (60% of total range)
 
 input group "=== Candle Close SL Settings ==="
@@ -981,8 +981,11 @@ void CheckM1PriceActionCutProfit(const string symbol)
             }
          }
 
-         // Batalkan sisa pending order limit milik batch ini
-         CancelPendingOrdersByBatch(bId, StringFormat("M1 Reversal Cut Profit Triggered (%s)", patternName));
+         // Batalkan semua sisa pending order limit milik batch ini karena tekanan lawan arah besar!
+         CancelPendingOrdersByBatch(bId, StringFormat("M1 Reversal Cut Profit Triggered (%s) - Cancel Remaining Pending Orders", patternName));
+
+         // Kunci batch ini agar tidak memasang pending limit baru di area yang berisiko ini
+         MarkBatchTPCompleted(bId);
       }
    }
 }
