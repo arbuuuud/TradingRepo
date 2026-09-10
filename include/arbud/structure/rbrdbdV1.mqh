@@ -146,6 +146,13 @@ struct STimeframeRBRDBDData
    color             channelBgColor;
    datetime          lastBarTime;
 
+   // High probability filters
+   bool              useAtrLegFilter;
+   int               atrPeriod;
+   double            minAtrMultiplier;
+   double            minLegBodyRatio;
+   int               atrHandle;
+
    SRBRDBDArea       areas[];
    SRoofFloorChannel currentChannel;
    SRoofFloorChannel channelsHistory[]; // List of all channels
@@ -163,23 +170,32 @@ struct STimeframeRBRDBDData
              color clrInvalid = clrGray,
              color clrRoof = clrIndianRed,
              color clrFloor = clrMediumSeaGreen,
-             color clrBg = C'20,30,45')
+             color clrBg = C'20,30,45',
+             bool useAtr = false,
+             int aPeriod = 14,
+             double minAtrMul = 1.0,
+             double minBodyRatio = 0.60)
    {
-      tf             = period;
-      minBaseCandles = minBase;
-      maxBaseCandles = maxBase;
-      minLegRatio    = legRatio;
-      drawEnabled    = draw;
-      drawRoofFloor  = drawRF;
-      rbrColor       = clrRBR;
-      dbdColor       = clrDBD;
-      usedColor      = clrUsed;
-      invalidColor   = clrInvalid;
-      roofColor      = clrRoof;
-      floorColor     = clrFloor;
-      channelBgColor = clrBg;
-      lastBarTime    = 0;
-      channelCounter = 0;
+      tf               = period;
+      minBaseCandles   = minBase;
+      maxBaseCandles   = maxBase;
+      minLegRatio      = legRatio;
+      drawEnabled      = draw;
+      drawRoofFloor    = drawRF;
+      rbrColor         = clrRBR;
+      dbdColor         = clrDBD;
+      usedColor        = clrUsed;
+      invalidColor     = clrInvalid;
+      roofColor        = clrRoof;
+      floorColor       = clrFloor;
+      channelBgColor   = clrBg;
+      lastBarTime      = 0;
+      channelCounter   = 0;
+      useAtrLegFilter  = useAtr;
+      atrPeriod        = aPeriod;
+      minAtrMultiplier = minAtrMul;
+      minLegBodyRatio  = minBodyRatio;
+      atrHandle        = INVALID_HANDLE;
 
       ArrayResize(areas, 0);
       ArrayResize(channelsHistory, 0);
@@ -206,6 +222,14 @@ public:
    ~CRBRDBDV1()
    {
       ClearChartObjects();
+      for(int i = 0; i < m_totalTFs; i++)
+      {
+         if(m_tfList[i].atrHandle != INVALID_HANDLE)
+         {
+            IndicatorRelease(m_tfList[i].atrHandle);
+            m_tfList[i].atrHandle = INVALID_HANDLE;
+         }
+      }
       ArrayFree(m_tfList);
    }
 
@@ -221,21 +245,29 @@ public:
                           const color rbrColor = clrSeaGreen,
                           const color dbdColor = clrIndianRed,
                           const color roofColor = clrCrimson,
-                          const color floorColor = clrLimeGreen)
+                          const color floorColor = clrLimeGreen,
+                          const bool useAtrFilter = false,
+                          const int atrPeriod = 14,
+                          const double minAtrMultiplier = 1.0,
+                          const double minLegBodyRatio = 0.60)
    {
       for(int i = 0; i < m_totalTFs; i++)
       {
          if(m_tfList[i].tf == tf)
          {
-            m_tfList[i].minBaseCandles = minBaseCandles;
-            m_tfList[i].maxBaseCandles = maxBaseCandles;
-            m_tfList[i].minLegRatio    = minLegRatio;
-            m_tfList[i].drawEnabled    = drawOnChart;
-            m_tfList[i].drawRoofFloor  = drawRoofFloor;
-            m_tfList[i].rbrColor       = rbrColor;
-            m_tfList[i].dbdColor       = dbdColor;
-            m_tfList[i].roofColor      = roofColor;
-            m_tfList[i].floorColor     = floorColor;
+            m_tfList[i].minBaseCandles   = minBaseCandles;
+            m_tfList[i].maxBaseCandles   = maxBaseCandles;
+            m_tfList[i].minLegRatio      = minLegRatio;
+            m_tfList[i].drawEnabled      = drawOnChart;
+            m_tfList[i].drawRoofFloor    = drawRoofFloor;
+            m_tfList[i].rbrColor         = rbrColor;
+            m_tfList[i].dbdColor         = dbdColor;
+            m_tfList[i].roofColor        = roofColor;
+            m_tfList[i].floorColor       = floorColor;
+            m_tfList[i].useAtrLegFilter  = useAtrFilter;
+            m_tfList[i].atrPeriod        = atrPeriod;
+            m_tfList[i].minAtrMultiplier = minAtrMultiplier;
+            m_tfList[i].minLegBodyRatio  = minLegBodyRatio;
             return true;
          }
       }
@@ -247,9 +279,11 @@ public:
          return false;
       }
 
-      m_tfList[m_totalTFs - 1].Init(tf, minBaseCandles, maxBaseCandles, minLegRatio, drawOnChart, drawRoofFloor, rbrColor, dbdColor, clrSandyBrown, clrGray, roofColor, floorColor);
-      PrintFormat("[CRBRDBDV1] Registered TF: %s (Base: %d~%d candles, Ratio: %.1f, RoofFloor: %s)", 
-                  EnumToString(tf), minBaseCandles, maxBaseCandles, minLegRatio, drawRoofFloor ? "true" : "false");
+      m_tfList[m_totalTFs - 1].Init(tf, minBaseCandles, maxBaseCandles, minLegRatio, drawOnChart, drawRoofFloor, 
+                                   rbrColor, dbdColor, clrSandyBrown, clrGray, roofColor, floorColor, C'20,30,45',
+                                   useAtrFilter, atrPeriod, minAtrMultiplier, minLegBodyRatio);
+      PrintFormat("[CRBRDBDV1] Registered TF: %s (Base: %d~%d candles, Ratio: %.1f, ATRFilter: %s, RoofFloor: %s)", 
+                  EnumToString(tf), minBaseCandles, maxBaseCandles, minLegRatio, useAtrFilter ? "true" : "false", drawRoofFloor ? "true" : "false");
       return true;
    }
 
@@ -448,6 +482,12 @@ private:
    //+------------------------------------------------------------------+
    void InitTFHistory(const string symbol, STimeframeRBRDBDData &data, const int maxBars, CStructureV0 *structureEngine = NULL)
    {
+      // Ensure ATR indicator handle is created if filter is enabled
+      if(data.useAtrLegFilter && data.atrHandle == INVALID_HANDLE)
+      {
+         data.atrHandle = iATR(symbol, data.tf, data.atrPeriod);
+      }
+
       MqlRates rates[];
       ArraySetAsSeries(rates, true);
 
@@ -464,7 +504,7 @@ private:
       // index 'outIdx' represents the Leg-Out candle
       for(int outIdx = copied - 3; outIdx >= 1; outIdx--)
       {
-         DetectPatternAtBar(rates, copied, outIdx, data);
+         DetectPatternAtBar(symbol, rates, copied, outIdx, data);
       }
 
       // Track consumption sequentially from formation time up to Bar 1
@@ -502,6 +542,12 @@ private:
    //+------------------------------------------------------------------+
    void ScanRecentBars(const string symbol, STimeframeRBRDBDData &data)
    {
+      // Ensure ATR indicator handle is created if filter is enabled
+      if(data.useAtrLegFilter && data.atrHandle == INVALID_HANDLE)
+      {
+         data.atrHandle = iATR(symbol, data.tf, data.atrPeriod);
+      }
+
       MqlRates rates[];
       ArraySetAsSeries(rates, true);
 
@@ -509,18 +555,45 @@ private:
       if(CopyRates(symbol, data.tf, 0, needed, rates) < needed) return;
 
       // Check if Bar 1 was a Leg-Out candle of a new RBR or DBD
-      DetectPatternAtBar(rates, needed, 1, data);
+      DetectPatternAtBar(symbol, rates, needed, 1, data);
    }
 
    //+------------------------------------------------------------------+
    //| Core Pattern Detection logic at candle index 'outIdx'            |
    //+------------------------------------------------------------------+
-   void DetectPatternAtBar(const MqlRates &rates[], const int totalRates, const int outIdx, STimeframeRBRDBDData &data)
+   void DetectPatternAtBar(const string symbol, const MqlRates &rates[], const int totalRates, const int outIdx, STimeframeRBRDBDData &data)
    {
+      // Optional ATR value for dynamic volatility sizing
+      double atrVal = 0.0;
+      if(data.useAtrLegFilter)
+      {
+         if(data.atrHandle == INVALID_HANDLE)
+            data.atrHandle = iATR(symbol, data.tf, data.atrPeriod);
+
+         if(data.atrHandle != INVALID_HANDLE)
+         {
+            double atrBuffer[1];
+            // Copy ATR value corresponding to outIdx
+            if(CopyBuffer(data.atrHandle, 0, outIdx, 1, atrBuffer) > 0)
+            {
+               atrVal = atrBuffer[0];
+            }
+         }
+      }
+
       // 1. Evaluate Leg-Out Candle (Strong Extended Range Candle - ERC)
       double outBody  = MathAbs(rates[outIdx].close - rates[outIdx].open);
       double outRange = rates[outIdx].high - rates[outIdx].low;
-      if(outRange <= 0.0 || (outBody / outRange) < 0.50) return; // Body must be at least 50% of range
+      if(outRange <= 0.0) return;
+
+      // High Probability Check for Leg-Out:
+      double minBodyRatio = (data.minLegBodyRatio > 0.0) ? data.minLegBodyRatio : 0.50;
+      if((outBody / outRange) < minBodyRatio) return; // Body must dominate candle
+
+      if(data.useAtrLegFilter && atrVal > 0.0)
+      {
+         if(outRange < (atrVal * data.minAtrMultiplier)) return; // Tolak Leg-Out kecil di bawah batas ATR!
+      }
 
       bool outBullish = (rates[outIdx].close > rates[outIdx].open);
       bool outBearish = (rates[outIdx].close < rates[outIdx].open);
@@ -572,7 +645,15 @@ private:
          // 3. Evaluate Leg-In Candle (Strong ERC)
          double inBody  = MathAbs(rates[legInIdx].close - rates[legInIdx].open);
          double inRange = rates[legInIdx].high - rates[legInIdx].low;
-         if(inRange <= 0.0 || (inBody / inRange) < 0.50) continue;
+         if(inRange <= 0.0) continue;
+
+         // High Probability Check for Leg-In:
+         if((inBody / inRange) < minBodyRatio) continue; // Body Leg-In juga wajib dominan
+
+         if(data.useAtrLegFilter && atrVal > 0.0)
+         {
+            if(inRange < (atrVal * data.minAtrMultiplier)) continue; // Tolak Leg-In kecil di bawah batas ATR!
+         }
 
          bool inBullish = (rates[legInIdx].close > rates[legInIdx].open);
          bool inBearish = (rates[legInIdx].close < rates[legInIdx].open);

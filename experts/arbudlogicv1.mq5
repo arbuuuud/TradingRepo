@@ -58,7 +58,13 @@ input bool              InpDrawRbrDbdM3      = true;            // Draw M3 RBR/D
 input bool              InpDrawRoofFloorM3   = true;            // Draw M3 Transaction Areas (Floor/Roof)
 input int               InpMinBaseM3         = 1;               // M3 Min Base Candles (1~9)
 input int               InpMaxBaseM3         = 5;               // M3 Max Base Candles (1~9)
-input double            InpLegRatioM3        = 1.0;             // M3 Min Leg-Out vs Base Ratio
+input double            InpLegRatioM3        = 1.5;             // M3 Min Leg-Out vs Base Ratio (Default: 1.5x)
+
+input group "=== RBR / DBD High Probability Filters ==="
+input bool              InpUseAtrLegFilter   = true;            // Filter Leg with ATR Volatility (Reject tiny legs)
+input int               InpAtrPeriod         = 14;              // ATR Period
+input double            InpMinAtrMultiplier  = 1.0;              // Min Leg Range vs ATR (e.g. 1.0x ATR)
+input double            InpMinLegBodyRatio   = 0.60;            // Min Body / Total Range for Legs (e.g. 0.60 = 60%)
 
 input group "=== Visual Colors ==="
 input color             InpColorRBR          = clrMediumSeaGreen; // Fresh RBR (Demand)
@@ -145,7 +151,8 @@ int OnInit()
    // 3. RBR / DBD Registration (M3 - Active & Drawn, M5/H1 background for fallback)
    ExtRBRDBD.RegisterTimeframe(PERIOD_M1,  1, 5, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
    ExtRBRDBD.RegisterTimeframe(PERIOD_M3,  InpMinBaseM3, InpMaxBaseM3, InpLegRatioM3, 
-                               InpDrawRbrDbdM3, InpDrawRoofFloorM3, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
+                               InpDrawRbrDbdM3, InpDrawRoofFloorM3, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor,
+                               InpUseAtrLegFilter, InpAtrPeriod, InpMinAtrMultiplier, InpMinLegBodyRatio);
    ExtRBRDBD.RegisterTimeframe(PERIOD_M5,  1, 5, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
    ExtRBRDBD.RegisterTimeframe(PERIOD_H1,  1, 7, 1.0, false, false, InpColorRBR, InpColorDBD, InpColorRoof, InpColorFloor);
 
