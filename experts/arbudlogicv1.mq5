@@ -162,6 +162,20 @@ int OnInit()
 }
 
 //+------------------------------------------------------------------+
+//| Trade Transaction Event handler                                  |
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest &request,
+                        const MqlTradeResult &result)
+{
+   // Jika ada deal keluar (DEAL_ENTRY_OUT), periksa apakah ada batch yang selesai TP
+   if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
+   {
+      CheckStandardTPClosedOrders();
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Expert deinitialization function                                 |
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
@@ -824,7 +838,10 @@ void CheckStandardTPClosedOrders()
       bool isTPHit = (reason == DEAL_REASON_TP) || (StringFind(comment, "tp") >= 0) || (StringFind(comment, "TP") >= 0);
       if(!isTPHit) continue;
 
-      // Extract batchId from deal comment
+      // Extract batchId:
+      // Di MT5, DEAL_COMMENT sering di-overwrite broker menjadi "[tp]".
+      // Oleh karena itu, kita ekstrak batchId dari DEAL_COMMENT, atau jika tidak ada,
+      // lacak melalui DEAL_POSITION_ID (komentar posisi awal) atau DEAL_ORDER.
       int posBatchId = 0;
       if(StringFind(comment, "B") == 0)
       {
@@ -833,6 +850,25 @@ void CheckStandardTPClosedOrders()
          {
             string idStr = StringSubstr(comment, 1, underscoreIdx - 1);
             posBatchId = (int)StringToInteger(idStr);
+         }
+      }
+
+      // Jika comment di-overwrite broker ([tp]), lacak via Position ID
+      if(posBatchId <= 0)
+      {
+         ulong posId = (ulong)HistoryDealGetInteger(ticket, DEAL_POSITION_ID);
+         if(posId > 0 && HistoryOrderSelect(posId))
+         {
+            string ordComment = HistoryOrderGetString(posId, ORDER_COMMENT);
+            if(StringFind(ordComment, "B") == 0)
+            {
+               int underscoreIdx = StringFind(ordComment, "_");
+               if(underscoreIdx > 1)
+               {
+                  string idStr = StringSubstr(ordComment, 1, underscoreIdx - 1);
+                  posBatchId = (int)StringToInteger(idStr);
+               }
+            }
          }
       }
 
