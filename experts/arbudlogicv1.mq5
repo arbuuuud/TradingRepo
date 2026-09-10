@@ -37,6 +37,13 @@ input bool              InpEnableSmartTP     = true;            // Enable Early 
 input double            InpSmartTPThreshold  = 75.0;            // Threshold % to trigger Smart TP & Cancel Grid (Default 75%)
 input int               InpDefaultSpreadPoints = 35;            // Default Spread Points for Smart TP buffer (Min profit = 2x spread)
 
+input group "=== Cut Profit & Safety Exit Settings (Dual Guard) ==="
+input bool              InpEnableTieredExit     = true;         // Enable Tiered TP (Level 15%/85% when area >= 50%)
+input double            InpTieredAreaThreshold  = 50.0;         // Area used % to trigger Tiered TP (Default: 50%)
+input bool              InpEnableM1ReversalExit = true;         // Enable M1 Reversal Cut Profit when basket is in profit
+input int               InpMinPosForM1Exit      = 5;            // Min active positions to evaluate M1 reversal exit (>= 50% grid)
+input double            InpPinbarWickRatio      = 0.60;         // Min wick ratio for Pinbar/Hammer rejection (60% of total range)
+
 input group "=== Candle Close SL Settings ==="
 input bool              InpUseCandleCloseSL  = true;            // Cutloss on M3 Candle Close in 15%-30% outer zone
 input double            InpCloseZoneMinPct   = 15.0;            // Min % outside Floor/Roof for M3 Close SL (Default: 15%)
@@ -86,6 +93,7 @@ double g_lastChannelRoof  = 0.0;
 double g_lastChannelFloor = 0.0;
 int    g_currentActiveBatchId = 0;
 datetime g_lastM3BarTime  = 0;
+datetime g_lastM1BarTime  = 0;
 int g_completedTPBatchIds[];
 
 //+------------------------------------------------------------------+
@@ -115,6 +123,7 @@ void MarkBatchTPCompleted(const int batchId)
 void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel);
 void ManageSmartTP(const string symbol, const SRoofFloorChannel &channel, const double bid, const double ask);
 void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentChannel);
+void CheckM1PriceActionCutProfit(const string symbol);
 bool CalculateM3Equilibrium(const string symbol, const int lookback, double &outEq, double &outHigh, double &outLow);
 void CloseAllPositionsAndOrders(const string symbol, const string reason);
 void CancelAllPendingOrders(const string symbol, const string reason);
@@ -232,7 +241,13 @@ void OnTick()
       ManageSmartTP(_Symbol, channel, bid, ask);
    }
 
-   // 7. Check Standard TP Deal Closures: if batch already hit TP & area >= 75% used -> cancel remaining pending orders
+   // 7. M1 Price Action Cut Profit Check (Dual Guard: Early exit on M1 reversal pattern)
+   if(InpEnableM1ReversalExit)
+   {
+      CheckM1PriceActionCutProfit(_Symbol);
+   }
+
+   // 8. Check Standard TP Deal Closures: if batch already hit TP & area >= 75% used -> cancel remaining pending orders
    CheckStandardTPClosedOrders();
 }
 
@@ -639,32 +654,56 @@ void ManageSmartTP(const string symbol, const SRoofFloorChannel &currentChannel,
       }
 
       // --- Smart TP for BUY ---
-      // Jika Buy Area pernah kemakan >= 75%, dan harga sudah naik menyentuh level Smart TP Buy (Level 24%)
+      // Tier 1: Jika Buy Area pernah kemakan >= InpSmartTPThreshold (75%), exit di Level Smart TP Buy (Level 24%)
       if(posType == POSITION_TYPE_BUY && targetChannel.buyAreaUsedPct >= InpSmartTPThreshold)
       {
          if(bid >= targetChannel.levelSmartTPBuy)
          {
-            PrintFormat("[SmartTP] BUY #%I64u (%s) closed at %.5f (Batch %d was %.1f%% used, reached 24%% Smart TP Level %.5f)",
+            PrintFormat("[SmartTP Tier1] BUY #%I64u (%s) closed at %.5f (Batch %d was %.1f%% used, reached 24%% Smart TP Level %.5f)",
                         ticket, posComment, bid, targetChannel.batchId, targetChannel.buyAreaUsedPct, targetChannel.levelSmartTPBuy);
             if(ExtTrade.PositionClose(ticket))
             {
-               // Hapus sisa limit order jika batch sudah TP dan area >= 75% used
                CancelPendingOrdersByBatch(targetChannel.batchId, StringFormat("Smart TP Triggered & Area >= %.1f%% Used", InpSmartTPThreshold));
             }
          }
       }
+      // Tier 2: Jika Buy Area pernah kemakan >= InpTieredAreaThreshold (50%), exit lebih awal di Level 15% (LevelTier2TPBuy)
+      else if(posType == POSITION_TYPE_BUY && InpEnableTieredExit && targetChannel.buyAreaUsedPct >= InpTieredAreaThreshold)
+      {
+         if(bid >= targetChannel.levelTier2TPBuy)
+         {
+            PrintFormat("[TieredTP Tier2] BUY #%I64u (%s) closed at %.5f (Batch %d was %.1f%% used, reached 15%% Tiered TP Level %.5f)",
+                        ticket, posComment, bid, targetChannel.batchId, targetChannel.buyAreaUsedPct, targetChannel.levelTier2TPBuy);
+            if(ExtTrade.PositionClose(ticket))
+            {
+               CancelPendingOrdersByBatch(targetChannel.batchId, StringFormat("Tiered TP Triggered & Area >= %.1f%% Used", InpTieredAreaThreshold));
+            }
+         }
+      }
       // --- Smart TP for SELL ---
-      // Jika Sell Area pernah kemakan >= 75%, dan harga sudah turun menyentuh level Smart TP Sell (Level 76%)
+      // Tier 1: Jika Sell Area pernah kemakan >= InpSmartTPThreshold (75%), exit di Level Smart TP Sell (Level 76%)
       else if(posType == POSITION_TYPE_SELL && targetChannel.sellAreaUsedPct >= InpSmartTPThreshold)
       {
          if(ask <= targetChannel.levelSmartTPSell)
          {
-            PrintFormat("[SmartTP] SELL #%I64u (%s) closed at %.5f (Batch %d was %.1f%% used, reached 76%% Smart TP Level %.5f)",
+            PrintFormat("[SmartTP Tier1] SELL #%I64u (%s) closed at %.5f (Batch %d was %.1f%% used, reached 76%% Smart TP Level %.5f)",
                         ticket, posComment, ask, targetChannel.batchId, targetChannel.sellAreaUsedPct, targetChannel.levelSmartTPSell);
             if(ExtTrade.PositionClose(ticket))
             {
-               // Hapus sisa limit order jika batch sudah TP dan area >= 75% used
                CancelPendingOrdersByBatch(targetChannel.batchId, StringFormat("Smart TP Triggered & Area >= %.1f%% Used", InpSmartTPThreshold));
+            }
+         }
+      }
+      // Tier 2: Jika Sell Area pernah kemakan >= InpTieredAreaThreshold (50%), exit lebih awal di Level 85% (LevelTier2TPSell)
+      else if(posType == POSITION_TYPE_SELL && InpEnableTieredExit && targetChannel.sellAreaUsedPct >= InpTieredAreaThreshold)
+      {
+         if(ask <= targetChannel.levelTier2TPSell)
+         {
+            PrintFormat("[TieredTP Tier2] SELL #%I64u (%s) closed at %.5f (Batch %d was %.1f%% used, reached 85%% Tiered TP Level %.5f)",
+                        ticket, posComment, ask, targetChannel.batchId, targetChannel.sellAreaUsedPct, targetChannel.levelTier2TPSell);
+            if(ExtTrade.PositionClose(ticket))
+            {
+               CancelPendingOrdersByBatch(targetChannel.batchId, StringFormat("Tiered TP Triggered & Area >= %.1f%% Used", InpTieredAreaThreshold));
             }
          }
       }
@@ -748,6 +787,202 @@ void CheckCandleCloseSL(const string symbol, const SRoofFloorChannel &currentCha
             ExtTrade.PositionClose(ticket);
             CancelPendingOrdersByBatch(targetChannel.batchId, "M3 Candle Closed in 15%-30% Outer Zone (SL)");
          }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check M1 Price Action Cut Profit (Dual Guard: Early Exit on M1)  |
+//| Triggers when:                                                   |
+//| 1. Batch active positions >= InpMinPosForM1Exit (>= 5 positions) |
+//| 2. Total batch net profit > 0 (floating in profit)               |
+//| 3. Bar 1 completes an M1 reversal candlestick pattern            |
+//+------------------------------------------------------------------+
+void CheckM1PriceActionCutProfit(const string symbol)
+{
+   if(!InpEnableM1ReversalExit) return;
+
+   // Check if a new M1 candle just opened (meaning bar 1 completed)
+   datetime curM1Time = iTime(symbol, PERIOD_M1, 0);
+   if(curM1Time == 0 || curM1Time == g_lastM1BarTime) return;
+   g_lastM1BarTime = curM1Time;
+
+   // Ambil data candle M1 bar 1 dan bar 2
+   MqlRates ratesM1[];
+   ArraySetAsSeries(ratesM1, true);
+   if(CopyRates(symbol, PERIOD_M1, 0, 4, ratesM1) < 4) return;
+
+   // 1. Identifikasi semua batch aktif dan hitung posisi + floating net profit
+   int activeBatchIds[];
+   ArrayResize(activeBatchIds, 0);
+
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+      string posComment = PositionGetString(POSITION_COMMENT);
+      int posBatchId = 0;
+      if(StringFind(posComment, "B") == 0)
+      {
+         int underscoreIdx = StringFind(posComment, "_");
+         if(underscoreIdx > 1)
+         {
+            string idStr = StringSubstr(posComment, 1, underscoreIdx - 1);
+            posBatchId = (int)StringToInteger(idStr);
+         }
+      }
+
+      if(posBatchId > 0)
+      {
+         bool exists = false;
+         for(int b = 0; b < ArraySize(activeBatchIds); b++)
+         {
+            if(activeBatchIds[b] == posBatchId) { exists = true; break; }
+         }
+         if(!exists)
+         {
+            int sz = ArraySize(activeBatchIds);
+            ArrayResize(activeBatchIds, sz + 1);
+            activeBatchIds[sz] = posBatchId;
+         }
+      }
+   }
+
+   // 2. Evaluasi setiap batch yang aktif
+   for(int b = 0; b < ArraySize(activeBatchIds); b++)
+   {
+      int bId = activeBatchIds[b];
+      string batchPrefix = StringFormat("B%d_", bId);
+
+      int batchPosCount = 0;
+      double batchNetProfit = 0.0;
+      ENUM_POSITION_TYPE batchPosType = POSITION_TYPE_BUY;
+
+      for(int i = 0; i < PositionsTotal(); i++)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket <= 0) continue;
+         if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
+         if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+         string posComment = PositionGetString(POSITION_COMMENT);
+         if(StringFind(posComment, batchPrefix) == 0)
+         {
+            batchPosCount++;
+            batchNetProfit += (PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP));
+            batchPosType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+         }
+      }
+
+      // Syarat 1: Posisi terisi >= InpMinPosForM1Exit (default: 5)
+      // Syarat 2: Posisi sedang floating net profit (> 0)
+      if(batchPosCount < InpMinPosForM1Exit || batchNetProfit <= 0.0) continue;
+
+      // Bar 1 data
+      double open1  = ratesM1[1].open;
+      double close1 = ratesM1[1].close;
+      double high1  = ratesM1[1].high;
+      double low1   = ratesM1[1].low;
+      double range1 = high1 - low1;
+      double body1  = MathAbs(close1 - open1);
+
+      // Bar 2 data
+      double open2  = ratesM1[2].open;
+      double close2 = ratesM1[2].close;
+      double high2  = ratesM1[2].high;
+      double low2   = ratesM1[2].low;
+      double range2 = high2 - low2;
+      double body2  = MathAbs(close2 - open2);
+
+      if(range1 <= 0.0) continue;
+
+      bool triggerExit = false;
+      string patternName = "";
+
+      // --- KASUS A: BATCH BUY SEDANG PROFIT -> DETEKSI PEMBALIKAN BEARISH DI M1 ---
+      if(batchPosType == POSITION_TYPE_BUY)
+      {
+         // 1. Bearish Engulfing: Bar 1 bearish & menelan open/close atau high/low Bar 2
+         bool isBearishEngulfing = (close1 < open1) && (open1 >= close2) && (close1 <= open2) && (body1 > body2);
+
+         // 2. Shooting Star / Pinbar Atas (Rejection Wick atas >= InpPinbarWickRatio)
+         double upperWick1 = high1 - MathMax(open1, close1);
+         bool isShootingStar = (upperWick1 / range1 >= InpPinbarWickRatio) && (close1 < high1);
+
+         // 3. Doji Reversal: Bar 2 Doji (body kecil <= 25% range) dan Bar 1 break di bawah low Bar 2
+         bool isDojiBreakout = (range2 > 0.0 && (body2 / range2) <= 0.25) && (close1 < low2);
+
+         if(isBearishEngulfing)
+         {
+            triggerExit = true;
+            patternName = "Bearish Engulfing";
+         }
+         else if(isShootingStar)
+         {
+            triggerExit = true;
+            patternName = "Shooting Star (Upper Rejection Pinbar)";
+         }
+         else if(isDojiBreakout)
+         {
+            triggerExit = true;
+            patternName = "Doji Bearish Breakdown";
+         }
+      }
+      // --- KASUS B: BATCH SELL SEDANG PROFIT -> DETEKSI PEMBALIKAN BULLISH DI M1 ---
+      else if(batchPosType == POSITION_TYPE_SELL)
+      {
+         // 1. Bullish Engulfing: Bar 1 bullish & menelan open/close atau high/low Bar 2
+         bool isBullishEngulfing = (close1 > open1) && (open1 <= close2) && (close1 >= open2) && (body1 > body2);
+
+         // 2. Hammer / Pinbar Bawah (Rejection Wick bawah >= InpPinbarWickRatio)
+         double lowerWick1 = MathMin(open1, close1) - low1;
+         bool isHammer = (lowerWick1 / range1 >= InpPinbarWickRatio) && (close1 > low1);
+
+         // 3. Doji Reversal: Bar 2 Doji (body kecil <= 25% range) dan Bar 1 break di atas high Bar 2
+         bool isDojiBreakout = (range2 > 0.0 && (body2 / range2) <= 0.25) && (close1 > high2);
+
+         if(isBullishEngulfing)
+         {
+            triggerExit = true;
+            patternName = "Bullish Engulfing";
+         }
+         else if(isHammer)
+         {
+            triggerExit = true;
+            patternName = "Hammer (Lower Rejection Pinbar)";
+         }
+         else if(isDojiBreakout)
+         {
+            triggerExit = true;
+            patternName = "Doji Bullish Breakout";
+         }
+      }
+
+      // Eksekusi Cut Profit jika terdeteksi pola pembalikan
+      if(triggerExit)
+      {
+         PrintFormat("[CutProfit M1] Batch B%d (%s, %d pos, NetProfit: %.2f) triggered Early Cut Profit by M1 Pattern: '%s'! Closing all positions!",
+                     bId, (batchPosType == POSITION_TYPE_BUY ? "BUY" : "SELL"), batchPosCount, batchNetProfit, patternName);
+
+         for(int i = PositionsTotal() - 1; i >= 0; i--)
+         {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket <= 0) continue;
+            if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
+            if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+            string posComment = PositionGetString(POSITION_COMMENT);
+            if(StringFind(posComment, batchPrefix) == 0)
+            {
+               ExtTrade.PositionClose(ticket);
+            }
+         }
+
+         // Batalkan sisa pending order limit milik batch ini
+         CancelPendingOrdersByBatch(bId, StringFormat("M1 Reversal Cut Profit Triggered (%s)", patternName));
       }
    }
 }
