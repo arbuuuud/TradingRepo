@@ -796,6 +796,33 @@ private:
       ENUM_TIMEFRAMES higherTF = GetNextHigherTF(data.tf);
       int higherTFIndex = (higherTF != PERIOD_CURRENT) ? FindTFIndex(higherTF) : -1;
 
+      // Ambil waktu batas structure latest untuk filter (Hanya ambil zona di structure -1, -2 ke belakang)
+      datetime maxBaseTimeCurrentTF = LONG_MAX;
+      datetime maxBaseTimeHigherTF  = LONG_MAX;
+      if(structureEngine != NULL)
+      {
+         SStructurePoint structArr[];
+         if(structureEngine.GetStructures(data.tf, structArr))
+         {
+            int sz = ArraySize(structArr);
+            // Latest structure adalah structArr[sz-1].
+            // Agar zona tidak berada di structure latest, waktu baseStart harus <= structArr[sz-2].candleTime
+            if(sz >= 2)
+            {
+               maxBaseTimeCurrentTF = structArr[sz - 2].candleTime;
+            }
+         }
+
+         if(higherTF != PERIOD_CURRENT && structureEngine.GetStructures(higherTF, structArr))
+         {
+            int szH = ArraySize(structArr);
+            if(szH >= 2)
+            {
+               maxBaseTimeHigherTF = structArr[szH - 2].candleTime;
+            }
+         }
+      }
+
       // ====================================================================
       // 1. DETERMINE ROOF (PRIORITAS 1 -> 2 -> 3 -> 4 -> INVALID)
       // ====================================================================
@@ -815,6 +842,8 @@ private:
             if(m_tfList[currentTFIndex].areas[a].isInvalid) continue;
             // PAC: Jangan gunakan DBD yang sudah exhausted/consumed >= 75%
             if(m_tfList[currentTFIndex].areas[a].consumptionPct >= 75.0) continue;
+            // Structure Lookback Filter: Jangan ambil DBD di structure latest (minimal structure -1 / -2)
+            if(maxBaseTimeCurrentTF < LONG_MAX && m_tfList[currentTFIndex].areas[a].baseStart > maxBaseTimeCurrentTF) continue;
 
             if(m_tfList[currentTFIndex].areas[a].type == RBRDBD_DBD)
             {
@@ -847,6 +876,8 @@ private:
             if(m_tfList[higherTFIndex].areas[a].isInvalid) continue;
             // PAC: Jangan gunakan DBD higher TF yang sudah exhausted/consumed >= 75%
             if(m_tfList[higherTFIndex].areas[a].consumptionPct >= 75.0) continue;
+            // Structure Lookback Filter: Jangan ambil DBD higher TF di structure latest
+            if(maxBaseTimeHigherTF < LONG_MAX && m_tfList[higherTFIndex].areas[a].baseStart > maxBaseTimeHigherTF) continue;
 
             if(m_tfList[higherTFIndex].areas[a].type == RBRDBD_DBD)
             {
@@ -915,6 +946,8 @@ private:
             if(m_tfList[currentTFIndex].areas[a].isInvalid) continue;
             // PAC: Jangan gunakan RBR yang sudah exhausted/consumed >= 75%
             if(m_tfList[currentTFIndex].areas[a].consumptionPct >= 75.0) continue;
+            // Structure Lookback Filter: Jangan ambil RBR di structure latest (minimal structure -1 / -2)
+            if(maxBaseTimeCurrentTF < LONG_MAX && m_tfList[currentTFIndex].areas[a].baseStart > maxBaseTimeCurrentTF) continue;
 
             if(m_tfList[currentTFIndex].areas[a].type == RBRDBD_RBR)
             {
@@ -947,6 +980,8 @@ private:
             if(m_tfList[higherTFIndex].areas[a].isInvalid) continue;
             // PAC: Jangan gunakan RBR higher TF yang sudah exhausted/consumed >= 75%
             if(m_tfList[higherTFIndex].areas[a].consumptionPct >= 75.0) continue;
+            // Structure Lookback Filter: Jangan ambil RBR higher TF di structure latest
+            if(maxBaseTimeHigherTF < LONG_MAX && m_tfList[higherTFIndex].areas[a].baseStart > maxBaseTimeHigherTF) continue;
 
             if(m_tfList[higherTFIndex].areas[a].type == RBRDBD_RBR)
             {

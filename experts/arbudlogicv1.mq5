@@ -223,9 +223,8 @@ void ManageGridOrders(const string symbol, const SRoofFloorChannel &channel)
    // Deteksi jika channel bergeser/berubah drastis atau batch berganti
    if(g_lastChannelRoof != channel.roofPrice || g_lastChannelFloor != channel.floorPrice || g_currentActiveBatchId != channel.batchId)
    {
-      // Bersihkan semua pending order lama yang bukan milik batch aktif baru
-      CleanupObsoletePendingOrders(channel.batchId);
-
+      // Pertahankan pending order batch lama! Jangan dihapus sembarangan.
+      // Order lama hanya akan dibersihkan jika batch tersebut sudah selesai TP dan posisinya clean.
       g_lastChannelRoof      = channel.roofPrice;
       g_lastChannelFloor     = channel.floorPrice;
       g_currentActiveBatchId = channel.batchId;
