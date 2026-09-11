@@ -1,7 +1,7 @@
 # Cetak Biru Arsitektur & Tahapan Implementasi: Living Trading Area & Dual Proactive Agent Framework (XAUUSD M1)
 
 > **Spesifikasi Rekayasa Sistem Algoritmik S&D Terpadu**  
-> **Target Arsitektur:** Single-TF Focus (M1) $\rightarrow$ Living TradingArea Object $\rightarrow$ Proactive Limit Grid Engine $\rightarrow$ Proactive Loss Prevention Engine  
+> **Target Arsitektur:** Single-TF Focus (M1) $\rightarrow$ RBR/DBD Strength Scoring (0, 1, 2) $\rightarrow$ Living TradingArea Object $\rightarrow$ Proactive Limit Grid Engine $\rightarrow$ Proactive Loss Prevention Engine  
 > **Target File:** `include/arbud/structure/` & `experts/rbrdbdV1Sample.mq5` (serta Next-Gen EA)  
 > **Instrumen:** XAUUSD (Gold) | **Base Timeframe:** M1  
 
@@ -9,12 +9,13 @@
 
 ## 🧠 Filosofi Desain Sistem (System Architecture Core)
 
-Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke dalam 4 pilar modular:
+Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke dalam 5 pilar modular:
 1. **Pure Pattern Storage & Memory Lifecycle**: Objek RBR dan DBD disimpan rapi di memori dinamis, terhubung dengan lifecycle harga, dan dibersihkan otomatis saat tidak lagi relevan (*garbage collected*).
-2. **Buffer Algoritmik Min-Variance**: Penentuan batas atas Roof dan batas bawah Floor menggunakan komparasi cerdas antara struktur ekstrem 10 candle ke belakang vs formula $2 \times \text{Base Height}$ (mengambil nilai terkecil/paling konservatif).
-3. **Living TradingArea (Stateful Living Object)**: Objek dinamis yang membungkus 1 Floor (RBR) dan 1 Roof (DBD), memetakan area transaksi Buy (0–25%), Sell (0–25% dari Roof), Hard TP (tepat di 50%), Hard SL (30% di luar batas), serta secara *realtime* mengelola status kelelahan zona (**Exhaustion Level 0 sampai 5**).
-4. **Dual Proactive Autonomous Agents**:
-   - **Agent 1: Proactive Limit Order Placer**: Memasang grid pending order limit hanya pada sub-area yang belum tersentuh (*fresh depth*), dengan alokasi lot/jumlah posisi yang menyesuaikan *exhaustion level* secara proporsional (*round down*).
+2. **RBR/DBD Strength Scoring Engine (Tingkat Kekuatan 0, 1, 2)**: Setiap zona RBR/DBD diuji menggunakan parameter ketat dari `rbr-dbd-high-probability-generator-spec.md` (Base Tightness, BOS Body Close, Direct Attached FVG, MTF Reflection / POI, dan Liquidity Sweep) untuk menghasilkan skor kekuatan zona (**Strength 0 = Weak / Raw, Strength 1 = Moderate, Strength 2 = High-Probability / A+ Setup**).
+3. **Buffer Algoritmik Min-Variance**: Penentuan batas atas Roof dan batas bawah Floor menggunakan komparasi cerdas antara struktur ekstrem 10 candle ke belakang vs formula $2 \times \text{Base Height}$ (mengambil nilai terkecil/paling konservatif).
+4. **Living TradingArea (Stateful Living Object)**: Objek dinamis yang membungkus 1 Floor (RBR) dan 1 Roof (DBD), memetakan area transaksi Buy (0–25%), Sell (0–25% dari Roof), Hard TP (tepat di 50%), Hard SL (30% di luar batas), serta secara *realtime* mengelola status kelelahan zona (**Exhaustion Level 0 sampai 5**).
+5. **Dual Proactive Autonomous Agents**:
+   - **Agent 1: Proactive Limit Order Placer**: Memasang grid pending order limit hanya pada sub-area yang belum tersentuh (*fresh depth*), dengan alokasi lot/jumlah posisi yang menyesuaikan *exhaustion level* secara proporsional (*round down*) dan memperhitungkan *Strength score* zona.
    - **Agent 2: Proactive Loss Prevention & Order Guard**: Secara proaktif memantau posisi aktif dan pending order. Jika terdeteksi sinyal pembalikan (*engulfing, doji, hammer*) atau pembentukan RBR/DBD lawan di harga saat ini, agen langsung menutup posisi (*emergency cut*) dan membatalkan pending order yang berisiko.
 
 ---
@@ -25,19 +26,22 @@ Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke 
 [ PHASE 1: Pure M1 RBR/DBD Memory & Lifecycle ] 
        │
        ▼
-[ PHASE 2: Dynamic Buffer Calculation (10-Candle Swing vs 2x Base) ]
+[ PHASE 2: RBR/DBD Strength Scoring Engine (Strength 0, 1, 2) ]
        │
        ▼
-[ PHASE 3: Living TradingArea Engine & 6-Stage Exhaustion State Machine ]
+[ PHASE 3: Dynamic Buffer Calculation (10-Candle Swing vs 2x Base) ]
        │
        ▼
-[ PHASE 4: Agent Proactive Limit Order Grid (Dynamic Allocation & Depth Mapping) ]
+[ PHASE 4: Living TradingArea Engine & 6-Stage Exhaustion State Machine ]
        │
        ▼
-[ PHASE 5: Agent Proactive Loss Prevention (Price Action & Counter RBR/DBD Guard) ]
+[ PHASE 5: Agent Proactive Limit Order Grid (Dynamic Allocation & Depth Mapping) ]
        │
        ▼
-[ PHASE 6: Integrated End-to-End Simulation & Verification ]
+[ PHASE 6: Agent Proactive Loss Prevention (Price Action & Counter RBR/DBD Guard) ]
+       │
+       ▼
+[ PHASE 7: Integrated End-to-End Simulation & Verification ]
 ```
 
 ---
@@ -65,7 +69,44 @@ Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke 
 
 ---
 
-### 🔹 PHASE 2: Penentuan Buffer Algoritmik (10-Candle Extreme vs $2\times$ Base)
+### 🔹 PHASE 2: RBR/DBD Strength Scoring Engine (Strength 0, 1, 2)
+*Fokus: Mengklasifikasikan kualitas RBR/DBD ke dalam tingkatan kekuatan (Strength 0, 1, 2) berdasarkan 5 Filter Mutlak SMC Spec.*
+
+#### 1. Logika & 5 Pilar Evaluasi Nilai Tambah (Confluence Scoring):
+Setiap RBR/DBD M1 yang baru terbentuk akan dievaluasi terhadap 5 pilar kriteria dari `rbr-dbd-high-probability-generator-spec.md`:
+
+1. **Pilar A - Kepadatan Base & MTF Reflection (Bobot 1 Poin)**:
+   - Base M1 ketat (body rata-rata $\le 60\%$, range base padat $\le 5$ candle).
+   - Base M1 terefleksi sebagai 1–3 candle bersih di M5/M15 (bukan noise liar).
+2. **Pilar B - BOS / ChoCH Wajib Body Close (Bobot 1 Poin)**:
+   - Lilin Leg-Out wajib ditutup (*Close*) melampaui Swing High (untuk RBR) atau Swing Low (untuk DBD) terdekat.
+   - Menolak *wick sweep* semata.
+3. **Pilar C - Direct Attached FVG (Magnet Retest) (Bobot 1 Poin)**:
+   - Lilin Leg-Out meninggalkan FVG signifikan ($\ge 50$ points pada XAUUSD).
+   - Batas luar FVG menempel langsung pada batas luar Base (*proximal boundary*).
+4. **Pilar D - Reaction from HTF POI (Anti-No Man's Land) (Bobot 1 Poin)**:
+   - Titik awal Leg-In bermula dari reaksi pantulan pada zona POI Timeframe Lebih Tinggi (M15 / H1).
+5. **Pilar E - Liquidity Sweep / Big Figure Confluence (Bobot 1 Poin)**:
+   - Base melakukan sweep terhadap Equal Highs / Equal Lows (EQH/EQL) atau level psikologis bulat XAUUSD ($xx00, $xx50) sebelum Leg-Out meledak.
+
+#### 2. Klasifikasi Tingkat Kekuatan (Strength Output):
+Total Poin yang terkumpul ($0 - 5$) dipetakan menjadi skor **Strength 0, 1, 2**:
+
+| Nilai Poin | Klasifikasi Strength | Label / Status | Karakteristik & Perlakuan |
+|:---:|:---:|:---:|---|
+| **0 – 1 Poin** | **Strength 0** | `[WEAK / RAW]` | Pola geometris RBR/DBD biasa tanpa konfirmasi SMC kuat. Tidak disarankan untuk entri trading utama, atau kuota order diminimalkan/diabaikan. |
+| **2 – 3 Poin** | **Strength 1** | `[MODERATE]` | Memiliki konfirmasi dasar (misal ada FVG menempel dan Base padat, atau ada BOS Body Close). Layak diperdagangkan dengan alokasi lot standar/terukur. |
+| **4 – 5 Poin** | **Strength 2** | `[HIGH-PROBABILITY / A+]` | **A+ Institutional Setup**: Base padat, ada BOS Body Close, ada FVG menempel langsung, bersumber dari HTF POI, dan/atau melakukan liquidity sweep. Prioritas entri tertinggi dengan probabilitas reaksi maksimal. |
+
+#### 🧪 Harapan / Expected Test Result:
+- Label pada chart menampilkan status kekuatan secara gamblang:  
+  `M1 RBR [Strength 2: A+] (Fresh)` atau `M1 DBD [Strength 1: Moderate] (Fresh)`.
+- Warna border/kotak dapat membedakan tingkat kekuatan (misal: Strength 2 bergaris tebal/warna emas menyala).
+- Logika filtering mampu memilah secara otomatis mana zona noise (Strength 0) vs zona institusional berprobabilitas tinggi (Strength 2).
+
+---
+
+### 🔹 PHASE 3: Penentuan Buffer Algoritmik (10-Candle Extreme vs $2\times$ Base)
 *Fokus: Menentukan garis batas luar yang presisi untuk Floor dan Roof.*
 
 #### 1. Logika & Formulasi Matematis:
@@ -91,7 +132,7 @@ Untuk setiap RBR (Floor) dan DBD (Roof) yang terpilih, kita tetapkan nilai **Buf
 
 ---
 
-### 🔹 PHASE 3: Objek `Living TradingArea` & Mesin Status Kelelahan (Exhaustion Level 0–5)
+### 🔹 PHASE 4: Objek `Living TradingArea` & Mesin Status Kelelahan (Exhaustion Level 0–5)
 *Fokus: Menciptakan objek "hidup" yang menghubungkan Floor dan Roof serta memantau saturasi area secara realtime.*
 
 #### 1. Definisi Geometri & Level Harga `TradingArea`:
@@ -123,16 +164,19 @@ Status kelelahan dipantau independen untuk **Buy Area** dan **Sell Area**:
 #### 🧪 Harapan / Expected Test Result:
 - Kotak `TradingArea` terlukis rapi di chart: area Buy (bawah), area Sell (atas), garis tengah Hard TP 50%, dan garis putus-putus Hard SL $\pm 30\%$.
 - Terdapat HUD/Label interaktif di chart yang menampilkan:
-  - `TradingArea #ID | Buy Exhaustion: Level [0-5] (X%) | Sell Exhaustion: Level [0-5] (Y%)`.
+  - `TradingArea #ID | Buy Exhaustion: Level [0-5] (X%) | Sell Exhaustion: Level [0-5] (Y%) | Floor Strength: [0-2] | Roof Strength: [0-2]`.
 - Saat harga bergerak naik/turun mengikis area, angka persentase dan level kelelahan langsung naik secara presisi (*one-way ratchet*: tidak bisa turun kembali ke level 0 jika sudah tertembus).
 
 ---
 
-### 🔹 PHASE 4: Agent Proactive Limit Order Placer (Dynamic Grid & Fresh Depth Mapping)
+### 🔹 PHASE 5: Agent Proactive Limit Order Placer (Dynamic Grid & Fresh Depth Mapping)
 *Fokus: Agen proaktif yang menghitung alokasi posisi dan menempatkan limit order hanya pada kedalaman harga yang masih perawan.*
 
-#### 1. Aturan Alokasi Posisi Berdasarkan Exhaustion Level:
+#### 1. Aturan Alokasi Posisi Berdasarkan Exhaustion Level & Strength:
 Diberikan parameter input `Max_Pos_per_Trading_Area` (misal $= 10$ posisi):
+- **Filter Berdasarkan Strength**:
+  - Jika zona pendukung berstatus **Strength 0**, agen menahan diri atau membatasi pesanan.
+  - Jika zona pendukung berstatus **Strength 1 atau 2**, agen mengaktifkan kuota penuh.
 - **Formula Alokasi Kapasitas**:
   $$\text{AllowedPositions} = \text{Floor}\left(\text{Max\_Pos} \times \text{Factor}(\text{ExhaustionLevel})\right)$$
   - **Level 0 (Fresh)**: Kapasitas $100\%$ $\rightarrow \lfloor 10 \times 1.0 \rfloor = 10$ order.
@@ -156,7 +200,7 @@ Diberikan parameter input `Max_Pos_per_Trading_Area` (misal $= 10$ posisi):
 
 ---
 
-### 🔹 PHASE 5: Agent Proactive Loss Prevention (Price Action & Counter RBR/DBD Guard)
+### 🔹 PHASE 6: Agent Proactive Loss Prevention (Price Action & Counter RBR/DBD Guard)
 *Fokus: Agen pengawal risiko yang memantau floating position secara aktif untuk keluar dini sebelum terkena Hard SL.*
 
 #### 1. Pemicu Deteksi Reversal (*Proactive Cut Conditions*):
@@ -181,7 +225,7 @@ Agen terus memonitor pergerakan candle M1 (dan live tick) saat posisi aktif terb
 
 ---
 
-### 🔹 PHASE 6: Integrasi Sistem Penuh, Logging & Backtest Benchmark
+### 🔹 PHASE 7: Integrasi Sistem Penuh, Logging & Backtest Benchmark
 *Fokus: Penggabungan seluruh komponen menjadi EA utuh yang teruji di Strategy Tester Wine MT5.*
 
 #### 1. Skenario Pengujian Komprehensif:
@@ -197,7 +241,7 @@ Agen terus memonitor pergerakan candle M1 (dan live tick) saat posisi aktif terb
 
 #### 🧪 Harapan / Expected Test Result:
 - Backtest menghasilkan grafik pertumbuhan ekuitas (*equity curve*) yang stabil dan halus (*smooth*).
-- *Maximum Drawdown* terpangkas secara signifikan berkat peran aktif Agent Proactive Loss Prevention.
+- *Maximum Drawdown* terpangkas secara signifikan berkat peran aktif Agent Proactive Loss Prevention dan filter Strength zona.
 - Zero error, zero memory leak, dan efisiensi eksekusi tinggi di MT5 Wine.
 
 ---
@@ -206,12 +250,13 @@ Agen terus memonitor pergerakan candle M1 (dan live tick) saat posisi aktif terb
 
 | Phase | Komponen Utama | Milestone Deliverables | Target File | Status |
 |---|---|---|---|:---:|
-| **1** | M1 RBR/DBD Memory Pool | Storage dinamis & auto-cleanup zona invalid | `rbrdbdV1.mqh` | 🟡 Siap Desain |
-| **2** | Min-Variance Buffer Engine | Evaluasi $\min(\text{Swing}_{10}, 2\times\text{Base})$ untuk Floor & Roof | `rbrdbdV1.mqh` | ⚪ Menunggu Ph 1 |
-| **3** | Living TradingArea & State 0–5 | Objek living area, 6-level exhaustion, Hard TP/SL | `TradingArea.mqh` | ⚪ Menunggu Ph 2 |
-| **4** | Agent Proactive Limit Order | Kuota dinamis, fresh depth grid, auto-cancel pada TP | `AgentGridPlacer.mqh` | ⚪ Menunggu Ph 3 |
-| **5** | Agent Proactive Loss Prevention | Deteksi Engulfing/Doji/Counter-zone, emergency close | `AgentLossGuard.mqh` | ⚪ Menunggu Ph 4 |
-| **6** | Integrated EA & Backtest Suite | Demonstrator terpadu & pengujian di XAUUSD M1 | `rbrdbdV2Sample.mq5` | ⚪ Menunggu Ph 5 |
+| **1** | M1 RBR/DBD Memory Pool | Storage dinamis & auto-cleanup zona invalid/mitigated | `rbrdbdV1.mqh` | 🟡 Siap Desain |
+| **2** | RBR/DBD Strength Scoring | Klasifikasi bobot Strength (0, 1, 2) via SMC Criteria | `rbrdbdV1.mqh` | ⚪ Menunggu Ph 1 |
+| **3** | Min-Variance Buffer Engine | Evaluasi $\min(\text{Swing}_{10}, 2\times\text{Base})$ untuk Floor & Roof | `rbrdbdV1.mqh` | ⚪ Menunggu Ph 2 |
+| **4** | Living TradingArea & State 0–5 | Objek living area, 6-level exhaustion, Hard TP/SL | `TradingArea.mqh` | ⚪ Menunggu Ph 3 |
+| **5** | Agent Proactive Limit Order | Kuota dinamis, fresh depth grid, auto-cancel pada TP | `AgentGridPlacer.mqh` | ⚪ Menunggu Ph 4 |
+| **6** | Agent Proactive Loss Prevention | Deteksi Engulfing/Doji/Counter-zone, emergency close | `AgentLossGuard.mqh` | ⚪ Menunggu Ph 5 |
+| **7** | Integrated EA & Backtest Suite | Demonstrator terpadu & pengujian di XAUUSD M1 | `rbrdbdV2Sample.mq5` | ⚪ Menunggu Ph 6 |
 
 ---
 
