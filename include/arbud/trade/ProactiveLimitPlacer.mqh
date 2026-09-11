@@ -161,14 +161,24 @@ public:
    //| Proactive Loss Prevention & Clash of Strength Logic              |
    //| No panic close on floating minus! Dynamic Cut Profit & Def SL    |
    //+------------------------------------------------------------------+
+   //+------------------------------------------------------------------+
+   //| Synchronize SL & TP on TradingArea Change:                       |
+   //| Proactive Loss Prevention & Clash of Strength Logic              |
+   //| UNIFIED BATCH BREAK EVEN & CUT PROFIT FOR GRID POSITIONS         |
+   //+------------------------------------------------------------------+
    void SyncAreaTransitionRisk(const SLivingTradingArea &area,
                                const double currentBid,
                                const double currentAsk)
    {
-      double spreadBufferPoints = 32.0 * _Point; // 32 points ($0.32) spread buffer on Gold
+      double spreadBufferPoints = 32.0 * _Point;  // 32 points ($0.32) spread buffer on Gold
       double staticSLPoints     = 500.0 * _Point; // $5.00 static safety margin
 
-      // 1. Synchronize & Protect Open Positions
+      // --- STEP 1: CALCULATE WEIGHTED AVERAGE ENTRY & NET METRICS PER SIDE ---
+      double totalBuyLots = 0.0, sumBuyPriceLots = 0.0;
+      double totalSellLots = 0.0, sumSellPriceLots = 0.0;
+      int buyCount = 0, sellCount = 0;
+      int maxBuyStrength = 0, maxSellStrength = 0;
+
       for(int i = PositionsTotal() - 1; i >= 0; i--)
       {
          ulong ticket = PositionGetTicket(i);
@@ -179,157 +189,177 @@ public:
          {
             ENUM_POSITION_TYPE pType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
             double posOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            double posVolume    = PositionGetDouble(POSITION_VOLUME);
             string posComment   = PositionGetString(POSITION_COMMENT);
 
             if(pType == POSITION_TYPE_BUY)
             {
-               // Check if position is floating profit or floating minus
-               bool isFloatingMinus = (currentBid < posOpenPrice);
-
-               if(!isFloatingMinus)
-               {
-                  // FLOATING PROFIT: Secure with BE+ and target new area Hard TP 50%
-                  double newSL = NormalizeDouble(posOpenPrice + (10.0 * _Point), _Digits);
-                  double newTP = area.hardTP50;
-                  if(newTP <= (currentBid + (20.0 * _Point)))
-                     newTP = NormalizeDouble(currentBid + (50.0 * _Point), _Digits);
-
-                  m_trade.PositionModify(ticket, newSL, newTP);
-                  PrintFormat("[AreaTransition] Buy #%I64u Floating Profit secured: BE+ SL %.2f, TP %.2f",
-                              ticket, newSL, newTP);
-               }
-               else
-               {
-                  // FLOATING MINUS: CLASH OF STRENGTH & CUT PROFIT / BE ESCAPE ROUTE
-                  int myRBRStrength = ParseStrengthFromComment(posComment, area.floorStrength);
-                  int newDBDStrength = area.roofStrength;
-
-                  double targetExit = 0.0;
-
-                  // Clash of Strength:
-                  // If RBR was stronger than new DBD, and DBD proximal is above entry + spread
-                  if(myRBRStrength > newDBDStrength && area.hasOrganicRoof)
-                  {
-                     double dbdProximal = area.roofProximal;
-                     if(dbdProximal > (posOpenPrice + spreadBufferPoints) && dbdProximal > (currentAsk + spreadBufferPoints))
-                     {
-                        // Target Exit = Bibir DBD (Cut Profit!)
-                        targetExit = NormalizeDouble(dbdProximal, _Digits);
-                     }
-                     else
-                     {
-                        // Cannot cut profit at DBD, target Break Even
-                        targetExit = NormalizeDouble(posOpenPrice + spreadBufferPoints, _Digits);
-                     }
-                  }
-                  else
-                  {
-                     // DBD is equal or stronger: Emergency Break Even Evacuation
-                     targetExit = NormalizeDouble(posOpenPrice + spreadBufferPoints, _Digits);
-                  }
-
-                  // Routing Target Exit to TP or SL:
-                  double newTP = 0.0;
-                  double newSL = 0.0;
-
-                  if(targetExit > (currentBid + (20.0 * _Point)))
-                  {
-                     // Target exit is safely above current market price -> set as Take Profit
-                     newTP = targetExit;
-
-                     // Determine Protective SL: Default $5 drop from current price, or Floor Hard SL if closer
-                     double staticSL = NormalizeDouble(currentBid - staticSLPoints, _Digits);
-                     if(area.floorHardSL > staticSL && area.floorHardSL < currentBid)
-                        newSL = area.floorHardSL;
-                     else
-                        newSL = staticSL;
-                  }
-                  else
-                  {
-                     // Price already plunged below target exit: Convert targetExit into Defensive Stop Loss!
-                     newSL = targetExit;
-                     newTP = area.hardTP50;
-                  }
-
-                  m_trade.PositionModify(ticket, newSL, newTP);
-                  PrintFormat("[AreaTransition] Buy #%I64u Floating Minus managed: RBR_Str=%d vs DBD_Str=%d -> New TP %.2f, New SL %.2f",
-                              ticket, myRBRStrength, newDBDStrength, newTP, newSL);
-               }
+               totalBuyLots += posVolume;
+               sumBuyPriceLots += (posOpenPrice * posVolume);
+               buyCount++;
+               int s = ParseStrengthFromComment(posComment, area.floorStrength);
+               if(s > maxBuyStrength) maxBuyStrength = s;
             }
             else if(pType == POSITION_TYPE_SELL)
             {
-               // Check if position is floating profit or floating minus
-               bool isFloatingMinus = (currentAsk > posOpenPrice);
+               totalSellLots += posVolume;
+               sumSellPriceLots += (posOpenPrice * posVolume);
+               sellCount++;
+               int s = ParseStrengthFromComment(posComment, area.roofStrength);
+               if(s > maxSellStrength) maxSellStrength = s;
+            }
+         }
+      }
 
-               if(!isFloatingMinus)
+      double avgBuyEntryPrice  = (totalBuyLots > 0.0) ? (sumBuyPriceLots / totalBuyLots) : 0.0;
+      double avgSellEntryPrice = (totalSellLots > 0.0) ? (sumSellPriceLots / totalSellLots) : 0.0;
+
+      // Determine if each batch as a whole is in net floating profit or minus
+      bool buyBatchIsMinus  = (buyCount > 0 && currentBid < avgBuyEntryPrice);
+      bool sellBatchIsMinus = (sellCount > 0 && currentAsk > avgSellEntryPrice);
+
+      // --- STEP 2: CALCULATE UNIFIED BATCH TARGET EXIT FOR BUY ---
+      double buyBatchTargetExit = 0.0;
+      double buyBatchNewTP = 0.0;
+      double buyBatchNewSL = 0.0;
+
+      if(buyCount > 0)
+      {
+         if(!buyBatchIsMinus)
+         {
+            // Batch is net in profit: target new area Hard TP 50%
+            buyBatchNewTP = area.hardTP50;
+            if(buyBatchNewTP <= (currentBid + (20.0 * _Point)))
+               buyBatchNewTP = NormalizeDouble(currentBid + (50.0 * _Point), _Digits);
+
+            buyBatchNewSL = NormalizeDouble(avgBuyEntryPrice + (10.0 * _Point), _Digits);
+         }
+         else
+         {
+            // Batch is net floating minus: Clash of Strength against new DBD
+            int newDBDStrength = area.roofStrength;
+
+            if(maxBuyStrength > newDBDStrength && area.hasOrganicRoof)
+            {
+               double dbdProximal = area.roofProximal;
+               // If DBD proximal gives profit above whole batch average + spread
+               if(dbdProximal > (avgBuyEntryPrice + spreadBufferPoints) && dbdProximal > (currentAsk + spreadBufferPoints))
                {
-                  // FLOATING PROFIT: Secure with BE+ and target new area Hard TP 50%
-                  double newSL = NormalizeDouble(posOpenPrice - (10.0 * _Point), _Digits);
-                  double newTP = area.hardTP50;
-                  if(newTP >= (currentAsk - (20.0 * _Point)))
-                     newTP = NormalizeDouble(currentAsk - (50.0 * _Point), _Digits);
-
-                  m_trade.PositionModify(ticket, newSL, newTP);
-                  PrintFormat("[AreaTransition] Sell #%I64u Floating Profit secured: BE+ SL %.2f, TP %.2f",
-                              ticket, newSL, newTP);
+                  buyBatchTargetExit = NormalizeDouble(dbdProximal, _Digits);
                }
                else
                {
-                  // FLOATING MINUS: CLASH OF STRENGTH & CUT PROFIT / BE ESCAPE ROUTE
-                  int myDBDStrength = ParseStrengthFromComment(posComment, area.roofStrength);
-                  int newRBRStrength = area.floorStrength;
-
-                  double targetExit = 0.0;
-
-                  // Clash of Strength:
-                  // If DBD was stronger than new RBR, and RBR proximal is below entry - spread
-                  if(myDBDStrength > newRBRStrength && area.hasOrganicFloor)
-                  {
-                     double rbrProximal = area.floorProximal;
-                     if(rbrProximal < (posOpenPrice - spreadBufferPoints) && rbrProximal < (currentBid - spreadBufferPoints))
-                     {
-                        // Target Exit = Bibir RBR (Cut Profit!)
-                        targetExit = NormalizeDouble(rbrProximal, _Digits);
-                     }
-                     else
-                     {
-                        // Cannot cut profit at RBR, target Break Even
-                        targetExit = NormalizeDouble(posOpenPrice - spreadBufferPoints, _Digits);
-                     }
-                  }
-                  else
-                  {
-                     // RBR is equal or stronger: Emergency Break Even Evacuation
-                     targetExit = NormalizeDouble(posOpenPrice - spreadBufferPoints, _Digits);
-                  }
-
-                  // Routing Target Exit to TP or SL:
-                  double newTP = 0.0;
-                  double newSL = 0.0;
-
-                  if(targetExit < (currentAsk - (20.0 * _Point)))
-                  {
-                     // Target exit is safely below current market price -> set as Take Profit
-                     newTP = targetExit;
-
-                     // Determine Protective SL: Default $5 rise from current price, or Roof Hard SL if closer
-                     double staticSL = NormalizeDouble(currentAsk + staticSLPoints, _Digits);
-                     if(area.roofHardSL < staticSL && area.roofHardSL > currentAsk)
-                        newSL = area.roofHardSL;
-                     else
-                        newSL = staticSL;
-                  }
-                  else
-                  {
-                     // Price already surged above target exit: Convert targetExit into Defensive Stop Loss!
-                     newSL = targetExit;
-                     newTP = area.hardTP50;
-                  }
-
-                  m_trade.PositionModify(ticket, newSL, newTP);
-                  PrintFormat("[AreaTransition] Sell #%I64u Floating Minus managed: DBD_Str=%d vs RBR_Str=%d -> New TP %.2f, New SL %.2f",
-                              ticket, myDBDStrength, newRBRStrength, newTP, newSL);
+                  // Proximal cannot guarantee profit for batch -> Unified Batch BE
+                  buyBatchTargetExit = NormalizeDouble(avgBuyEntryPrice + spreadBufferPoints, _Digits);
                }
+            }
+            else
+            {
+               // DBD is equal or stronger: Emergency Unified Batch BE Evacuation
+               buyBatchTargetExit = NormalizeDouble(avgBuyEntryPrice + spreadBufferPoints, _Digits);
+            }
+
+            // Route TargetExit to TP or Defensive SL
+            if(buyBatchTargetExit > (currentBid + (20.0 * _Point)))
+            {
+               buyBatchNewTP = buyBatchTargetExit;
+               double staticSL = NormalizeDouble(currentBid - staticSLPoints, _Digits);
+               if(area.floorHardSL > staticSL && area.floorHardSL < currentBid)
+                  buyBatchNewSL = area.floorHardSL;
+               else
+                  buyBatchNewSL = staticSL;
+            }
+            else
+            {
+               // Price already plunged below Batch BE -> Convert to Defensive SL
+               buyBatchNewSL = buyBatchTargetExit;
+               buyBatchNewTP = area.hardTP50;
+            }
+         }
+      }
+
+      // --- STEP 3: CALCULATE UNIFIED BATCH TARGET EXIT FOR SELL ---
+      double sellBatchTargetExit = 0.0;
+      double sellBatchNewTP = 0.0;
+      double sellBatchNewSL = 0.0;
+
+      if(sellCount > 0)
+      {
+         if(!sellBatchIsMinus)
+         {
+            // Batch is net in profit: target new area Hard TP 50%
+            sellBatchNewTP = area.hardTP50;
+            if(sellBatchNewTP >= (currentAsk - (20.0 * _Point)))
+               sellBatchNewTP = NormalizeDouble(currentAsk - (50.0 * _Point), _Digits);
+
+            sellBatchNewSL = NormalizeDouble(avgSellEntryPrice - (10.0 * _Point), _Digits);
+         }
+         else
+         {
+            // Batch is net floating minus: Clash of Strength against new RBR
+            int newRBRStrength = area.floorStrength;
+
+            if(maxSellStrength > newRBRStrength && area.hasOrganicFloor)
+            {
+               double rbrProximal = area.floorProximal;
+               // If RBR proximal gives profit below whole batch average - spread
+               if(rbrProximal < (avgSellEntryPrice - spreadBufferPoints) && rbrProximal < (currentBid - spreadBufferPoints))
+               {
+                  sellBatchTargetExit = NormalizeDouble(rbrProximal, _Digits);
+               }
+               else
+               {
+                  // Proximal cannot guarantee profit for batch -> Unified Batch BE
+                  sellBatchTargetExit = NormalizeDouble(avgSellEntryPrice - spreadBufferPoints, _Digits);
+               }
+            }
+            else
+            {
+               // RBR is equal or stronger: Emergency Unified Batch BE Evacuation
+               sellBatchTargetExit = NormalizeDouble(avgSellEntryPrice - spreadBufferPoints, _Digits);
+            }
+
+            // Route TargetExit to TP or Defensive SL
+            if(sellBatchTargetExit < (currentAsk - (20.0 * _Point)))
+            {
+               sellBatchNewTP = sellBatchTargetExit;
+               double staticSL = NormalizeDouble(currentAsk + staticSLPoints, _Digits);
+               if(area.roofHardSL < staticSL && area.roofHardSL > currentAsk)
+                  sellBatchNewSL = area.roofHardSL;
+               else
+                  sellBatchNewSL = staticSL;
+            }
+            else
+            {
+               // Price already surged above Batch BE -> Convert to Defensive SL
+               sellBatchNewSL = sellBatchTargetExit;
+               sellBatchNewTP = area.hardTP50;
+            }
+         }
+      }
+
+      // --- STEP 4: APPLY UNIFIED BATCH TP & SL TO ALL POSITIONS ---
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket <= 0) continue;
+
+         if(PositionGetString(POSITION_SYMBOL) == m_symbol &&
+            PositionGetInteger(POSITION_MAGIC) == (long)m_magicNumber)
+         {
+            ENUM_POSITION_TYPE pType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+
+            if(pType == POSITION_TYPE_BUY)
+            {
+               m_trade.PositionModify(ticket, buyBatchNewSL, buyBatchNewTP);
+               PrintFormat("[AreaTransition] Buy #%I64u synced to Unified Batch: AvgEntry=%.2f, TP=%.2f, SL=%.2f",
+                           ticket, avgBuyEntryPrice, buyBatchNewTP, buyBatchNewSL);
+            }
+            else if(pType == POSITION_TYPE_SELL)
+            {
+               m_trade.PositionModify(ticket, sellBatchNewSL, sellBatchNewTP);
+               PrintFormat("[AreaTransition] Sell #%I64u synced to Unified Batch: AvgEntry=%.2f, TP=%.2f, SL=%.2f",
+                           ticket, avgSellEntryPrice, sellBatchNewTP, sellBatchNewSL);
             }
          }
       }
