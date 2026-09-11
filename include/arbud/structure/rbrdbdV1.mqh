@@ -257,13 +257,51 @@ public:
             // 1. Evaluate retest/consumption on completed bar 1
             EvaluateClosedBarConsumption(symbol, m_tfList[i]);
 
-            // 2. Scan if bar 1 was the Leg-Out of a new RBR or DBD
+            // 2. Scan if bar 1 was the Leg-Out of a new RBR or DBD (creates new zone immediately)
             ScanRecentBars(symbol, m_tfList[i]);
 
-            // 3. Refresh chart visuals
+            // 3. Dynamic Living TradingArea: evaluate pending FVG confirmations on existing zones
+            //    When candle 3 (right candle) is officially closed, confirm attached FVG and upgrade score
+            if(m_enablePhase2_3)
+            {
+               UpdatePendingAttachedFVG(symbol, m_tfList[i]);
+            }
+
+            // 4. Refresh chart visuals
             if(m_tfList[i].drawEnabled)
             {
                DrawAllAreas(m_tfList[i]);
+            }
+         }
+      }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Dynamic Evaluation: check newly closed candle 3 for pending FVG  |
+   //+------------------------------------------------------------------+
+   void UpdatePendingAttachedFVG(const string symbol, STimeframeRBRDBDData &data)
+   {
+      int total = ArraySize(data.areas);
+      for(int a = 0; a < total; a++)
+      {
+         // Only inspect active zones that have not yet passed Direct FVG
+         if(data.areas[a].isInvalid) continue;
+         if(data.areas[a].passDirectFVG) continue;
+
+         // Check if candle 3 has completed on the zone's origin period
+         ENUM_TIMEFRAMES tf = data.areas[a].period;
+         if(tf <= 0) tf = PERIOD_CURRENT;
+
+         int legOutBar = iBarShift(symbol, tf, data.areas[a].legOutTime, false);
+         if(legOutBar >= 2)
+         {
+            EvaluatePhase2_3_AttachedFVG(symbol, data.areas[a]);
+            if(data.areas[a].passDirectFVG)
+            {
+               // Recalculate total score dynamically
+               data.areas[a].totalScore = data.areas[a].scorePhase2_1 +
+                                          data.areas[a].scorePhase2_2 +
+                                          data.areas[a].scorePhase2_3;
             }
          }
       }
@@ -1089,6 +1127,7 @@ private:
    //| Phase 2.3 Evaluator: Direct Attached FVG on Origin Timeframe     |
    //| Validates 3-candle imbalance around Leg-Out on zone.period       |
    //| (M1 zone -> M1 FVG, M3 zone -> M3 FVG, M5 zone -> M5 FVG, etc.)  |
+   //| CRITICAL: Candle 3 (right candle) MUST BE FULLY CLOSED!          |
    //+------------------------------------------------------------------+
    void EvaluatePhase2_3_AttachedFVG(const string symbol, SRBRDBDArea &area)
    {
@@ -1105,20 +1144,23 @@ private:
 
       // Locate Leg-Out candle index on its origin timeframe
       int legOutBar = iBarShift(symbol, tf, area.legOutTime, false);
-      if(legOutBar < 1) return; // Need at least 1 bar after legOut (legOutBar - 1)
+      // CANDLE RIGHT (AFTER LEGOUT) IS AT BAR SHIFT: (legOutBar - 1).
+      // If (legOutBar - 1) <= 0, that candle is currently the LIVE bar (bar 0) or future, NOT CLOSED!
+      // Thus, legOutBar MUST be >= 2 so that candle 3 (legOutBar - 1 >= 1) is completely CLOSED.
+      if(legOutBar < 2) return;
 
-      // Copy 3 consecutive candles around Leg-Out on origin timeframe:
+      // Copy 3 consecutive completed candles around Leg-Out on origin timeframe:
       // Candle 1: Before Leg-Out (shift = legOutBar + 1)
       // Candle 2: Leg-Out candle (shift = legOutBar)
-      // Candle 3: After Leg-Out  (shift = legOutBar - 1)
+      // Candle 3: After Leg-Out  (shift = legOutBar - 1) -> GUARANTEED CLOSED
       MqlRates rates[];
       ArraySetAsSeries(rates, true);
       if(CopyRates(symbol, tf, legOutBar - 1, 3, rates) < 3) return;
 
       // When ArraySetAsSeries is true:
-      // rates[0] = shift legOutBar - 1 (Candle 3: After Leg-Out)
-      // rates[1] = shift legOutBar     (Candle 2: Leg-Out candle)
-      // rates[2] = shift legOutBar + 1 (Candle 1: Before Leg-Out / Base end)
+      // rates[0] = shift legOutBar - 1 (Candle 3: After Leg-Out, CLOSED)
+      // rates[1] = shift legOutBar     (Candle 2: Leg-Out candle, CLOSED)
+      // rates[2] = shift legOutBar + 1 (Candle 1: Before Leg-Out / Base end, CLOSED)
 
       double c1High = rates[2].high;
       double c1Low  = rates[2].low;
@@ -1142,8 +1184,8 @@ private:
                area.fvgTopPrice   = c3Low;
                area.fvgBotPrice   = c1High;
                area.fvgGapPoints  = NormalizeDouble(gap / _Point, 1);
-               area.fvgStartTime  = rates[1].time; // Leg-Out time
-               area.fvgEndTime    = rates[0].time; // Candle 3 time
+               area.fvgStartTime  = rates[1].time; // Formed across Leg-Out bar
+               area.fvgEndTime    = rates[0].time; // Confirmed upon Candle 3 close
                area.scorePhase2_3 = 1;
             }
          }
@@ -1162,8 +1204,8 @@ private:
                area.fvgTopPrice   = c1Low;
                area.fvgBotPrice   = c3High;
                area.fvgGapPoints  = NormalizeDouble(gap / _Point, 1);
-               area.fvgStartTime  = rates[1].time; // Leg-Out time
-               area.fvgEndTime    = rates[0].time; // Candle 3 time
+               area.fvgStartTime  = rates[1].time; // Formed across Leg-Out bar
+               area.fvgEndTime    = rates[0].time; // Confirmed upon Candle 3 close
                area.scorePhase2_3 = 1;
             }
          }
@@ -1513,6 +1555,10 @@ private:
          {
             datetime fvgStart = area.fvgStartTime;
             datetime fvgEnd   = futureTime; // Extend into future until retested or dynamic zone lifetime
+            if(area.isInvalid && area.invalidTime > 0)
+            {
+               fvgEnd = area.invalidTime;
+            }
 
             double fvgHigh = MathMax(area.fvgTopPrice, area.fvgBotPrice);
             double fvgLow  = MathMin(area.fvgTopPrice, area.fvgBotPrice);
