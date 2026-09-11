@@ -569,19 +569,8 @@ private:
 
       newArea.totalRange = NormalizeDouble(newArea.roofBoundary - newArea.floorBoundary, _Digits);
 
-      if(newArea.cascadeCondition == CASCADE_COND1_DUAL_ORGANIC || newArea.cascadeCondition == CASCADE_COND2_HTF_SWING)
-      {
-         // Equilibrium 50% between boundaries
-         newArea.hardTP50 = NormalizeDouble(newArea.floorBoundary + (0.50 * newArea.totalRange), _Digits);
-      }
-      else // CASCADE_COND3_BASE_RR1
-      {
-         // Target TP is exactly the synthetic boundary (RR 1:1)
-         if(hasFloor)
-            newArea.hardTP50 = newArea.roofBoundary;
-         else
-            newArea.hardTP50 = newArea.floorBoundary;
-      }
+      // Hard TP 50%: Always strictly 50% Equilibrium between Floor and Roof across ALL conditions!
+      newArea.hardTP50 = NormalizeDouble(newArea.floorBoundary + (0.50 * newArea.totalRange), _Digits);
 
       // Base Pocket Transaction Boundaries:
       // For Floor: If organic, buy zone is strictly its Base (from finalBoundary to proximal)
