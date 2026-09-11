@@ -514,13 +514,15 @@ private:
          }
          else
          {
-            // Condition 3: Fallback 1.0x Base Span + Buffer of Roof DBD (RR 1:1)
+            // Condition 3: Fallback 2.0x Roof Span downwards (RR 1:1 TP at 1.0x Roof Span)
+            // Roof Span = Final Roof (100%, includes buffer) - Base Bottom (proximal)
             double roofSpan = MathAbs(roofZone.finalBoundary - roofZone.proximal);
             if(roofSpan <= (5.0 * _Point)) roofSpan = 50.0 * _Point;
 
             newArea.cascadeCondition = CASCADE_COND3_BASE_RR1;
             newArea.floorSource      = BOUNDARY_BASE_SPAN_RR1;
-            newArea.floorBoundary    = NormalizeDouble(roofZone.proximal - (1.0 * roofSpan), _Digits);
+            // Floor (0%) is placed 2x roofSpan below Base Bottom so that TP 50% is exactly 1x roofSpan (RR 1:1)
+            newArea.floorBoundary    = NormalizeDouble(roofZone.proximal - (2.0 * roofSpan), _Digits);
             newArea.floorDistal      = newArea.floorBoundary;
             newArea.floorProximal    = newArea.floorBoundary;
          }
@@ -548,13 +550,15 @@ private:
          }
          else
          {
-            // Condition 3: Fallback 1.0x Base Span + Buffer of Floor RBR (RR 1:1)
+            // Condition 3: Fallback 2.0x Floor Span upwards (RR 1:1 TP at 1.0x Floor Span)
+            // Floor Span = Base Top (proximal) - Final Floor (0%, includes buffer)
             double floorSpan = MathAbs(floorZone.proximal - floorZone.finalBoundary);
             if(floorSpan <= (5.0 * _Point)) floorSpan = 50.0 * _Point;
 
             newArea.cascadeCondition = CASCADE_COND3_BASE_RR1;
             newArea.roofSource       = BOUNDARY_BASE_SPAN_RR1;
-            newArea.roofBoundary     = NormalizeDouble(floorZone.proximal + (1.0 * floorSpan), _Digits);
+            // Roof (100%) is placed 2x floorSpan above Base Top so that TP 50% is exactly 1x floorSpan (RR 1:1)
+            newArea.roofBoundary     = NormalizeDouble(floorZone.proximal + (2.0 * floorSpan), _Digits);
             newArea.roofDistal       = newArea.roofBoundary;
             newArea.roofProximal     = newArea.roofBoundary;
          }
@@ -569,37 +573,38 @@ private:
 
       newArea.totalRange = NormalizeDouble(newArea.roofBoundary - newArea.floorBoundary, _Digits);
 
-      // Hard TP 50%: Always strictly 50% Equilibrium between Floor and Roof across ALL conditions!
+      // Hard TP 50%: Always strictly 50% Equilibrium between Floor (0%) and Roof (100%)
+      // In Condition 3, this lands EXACTLY at 1.0x Base Span from Base Proximal (RR 1:1)!
       newArea.hardTP50 = NormalizeDouble(newArea.floorBoundary + (0.50 * newArea.totalRange), _Digits);
 
-      // Base Pocket Transaction Boundaries:
-      // For Floor: If organic, buy zone is strictly its Base (from finalBoundary to proximal)
+      // Sub-Area Transaction Boundaries (Base Pockets):
+      // Buy Area: strictly the organic RBR base + buffer (from finalBoundary to proximal)
       if(hasFloor)
       {
-         newArea.buyZoneStart = floorZone.finalBoundary;
-         newArea.buyZoneEnd   = floorZone.proximal;
-         newArea.floorHardSL  = floorZone.finalBoundary; // Hard SL at Distal - Buffer
+         newArea.buyZoneStart = floorZone.finalBoundary; // Floor (0%, Distal - Buffer)
+         newArea.buyZoneEnd   = floorZone.proximal;      // Base Top
       }
       else
       {
          newArea.buyZoneStart = newArea.floorBoundary;
          newArea.buyZoneEnd   = NormalizeDouble(newArea.floorBoundary + (0.25 * newArea.totalRange), _Digits);
-         newArea.floorHardSL  = newArea.floorBoundary;
       }
 
-      // For Roof: If organic, sell zone is strictly its Base (from proximal to finalBoundary)
+      // Sell Area: strictly the organic DBD base + buffer (from proximal to finalBoundary)
       if(hasRoof)
       {
-         newArea.sellZoneStart = roofZone.proximal;
-         newArea.sellZoneEnd   = roofZone.finalBoundary;
-         newArea.roofHardSL    = roofZone.finalBoundary; // Hard SL at Distal + Buffer
+         newArea.sellZoneStart = roofZone.proximal;       // Base Bottom
+         newArea.sellZoneEnd   = roofZone.finalBoundary; // Roof (100%, Distal + Buffer)
       }
       else
       {
          newArea.sellZoneStart = NormalizeDouble(newArea.roofBoundary - (0.25 * newArea.totalRange), _Digits);
          newArea.sellZoneEnd   = newArea.roofBoundary;
-         newArea.roofHardSL    = newArea.roofBoundary;
       }
+
+      // Hard SL: Strictly -30% below Floor (0%) and +130% above Roof (100%) per Phase 4 spec
+      newArea.floorHardSL = NormalizeDouble(newArea.floorBoundary - (0.30 * newArea.totalRange), _Digits);
+      newArea.roofHardSL  = NormalizeDouble(newArea.roofBoundary + (0.30 * newArea.totalRange), _Digits);
 
       newArea.isValid = true;
       m_activeArea    = newArea;
