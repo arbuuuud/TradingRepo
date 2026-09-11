@@ -19,6 +19,13 @@ enum ENUM_RBRDBD_TYPE
    RBRDBD_DBD  = 2  // Supply: Drop - Base - Drop
 };
 
+enum ENUM_BUFFER_TYPE
+{
+   BUFFER_TYPE_NONE     = 0,
+   BUFFER_TYPE_10_SWING = 1, // Determined by 10-candle extreme swing
+   BUFFER_TYPE_2X_BASE  = 2  // Determined by 2.0x base height formula
+};
+
 //+------------------------------------------------------------------+
 //| Struct for Individual Supply / Demand Zone                       |
 //+------------------------------------------------------------------+
@@ -87,6 +94,14 @@ struct SRBRDBDArea
    int               strengthLevel;    // 0: Weak (0-1★), 1: Moderate (2★), 2: High-Prob A+ (3-4★)
    string            dnaCode;          // DNA string: e.g. "TBFH", "-BFH", "T-F-", "----"
 
+   // Phase 3: Dynamic Buffer Calculation (10-Candle Swing vs 2x Base)
+   double            swing10Extreme;   // LowestLow (RBR) or HighestHigh (DBD) of prior 10 candles
+   double            deltaSwing;       // Distance from distal to 10-candle extreme
+   double            deltaBaseFormula; // 2.0 * zoneHeight
+   double            bufferPoints;     // Selected buffer in points
+   double            finalBoundary;    // Final Floor (RBR: distal - buffer) or Final Roof (DBD: distal + buffer)
+   ENUM_BUFFER_TYPE  bufferType;       // Selected buffer type (10_SWING vs 2X_BASE)
+
    void Init()
    {
       type              = RBRDBD_NONE;
@@ -145,6 +160,13 @@ struct SRBRDBDArea
       totalScore        = 0;
       strengthLevel     = 0;
       dnaCode           = "----";
+
+      swing10Extreme    = 0.0;
+      deltaSwing        = 0.0;
+      deltaBaseFormula  = 0.0;
+      bufferPoints      = 0.0;
+      finalBoundary     = 0.0;
+      bufferType        = BUFFER_TYPE_NONE;
    }
 };
 
@@ -209,12 +231,16 @@ private:
    bool                 m_enablePhase2_4B;// HTF Swing High/Low Structure Reaction
    double               m_minFVGGapPoints;// Minimum FVG gap in points (default 50 = $0.50 on Gold)
 
+   // Phase 3 Modular Switch
+   bool                 m_enablePhase3;   // Dynamic Buffer Calculation (10-Candle Swing vs 2x Base)
+
 public:
    CRBRDBDV1() : m_totalTFs(0), m_objPrefix("RBRDBD_"),
                  m_enablePhase2_1(true), m_enablePhase2_2(true),
                  m_enablePhase2_3(true), m_enablePhase2_4A(true),
                  m_enablePhase2_4B(true),
-                 m_minFVGGapPoints(50.0)
+                 m_minFVGGapPoints(50.0),
+                 m_enablePhase3(true)
    {
       ArrayResize(m_tfList, 0);
    }
@@ -237,11 +263,17 @@ public:
       m_minFVGGapPoints  = minFVGGapPoints;
    }
 
+   void SetPhase3Switch(const bool enablePhase3)
+   {
+      m_enablePhase3 = enablePhase3;
+   }
+
    bool GetPhase2_1Enabled()  const { return m_enablePhase2_1; }
    bool GetPhase2_2Enabled()  const { return m_enablePhase2_2; }
    bool GetPhase2_3Enabled()  const { return m_enablePhase2_3; }
    bool GetPhase2_4AEnabled() const { return m_enablePhase2_4A; }
    bool GetPhase2_4BEnabled() const { return m_enablePhase2_4B; }
+   bool GetPhase3Enabled()    const { return m_enablePhase3; }
 
    ~CRBRDBDV1()
    {
@@ -470,6 +502,8 @@ public:
                ObjectDelete(0, m_tfList[i].areas[a].objName + "_fvg");
                ObjectDelete(0, m_tfList[i].areas[a].objName + "_htfsw");
                ObjectDelete(0, m_tfList[i].areas[a].objName + "_htfsw_tag");
+               ObjectDelete(0, m_tfList[i].areas[a].objName + "_buf");
+               ObjectDelete(0, m_tfList[i].areas[a].objName + "_buftag");
 
                // Shift array to remove element
                int total = ArraySize(m_tfList[i].areas);
@@ -893,6 +927,16 @@ private:
 
       // Finalize 4-Star Score, DNA, and Strength Level
       FinalizePhase2Scoring(data.areas[size]);
+
+      // --- PHASE 3: Dynamic Buffer Calculation (10-Candle Swing vs 2x Base) ---
+      if(m_enablePhase3)
+         EvaluatePhase3_DynamicBuffer(symbol, data.areas[size]);
+      else
+      {
+         data.areas[size].bufferPoints  = 0.0;
+         data.areas[size].finalBoundary = data.areas[size].distal;
+         data.areas[size].bufferType    = BUFFER_TYPE_NONE;
+      }
 
       string lbl = (type == RBRDBD_RBR) ? "RBR" : "DBD";
       data.areas[size].objName = m_objPrefix + EnumToString(finalPeriod) + "_" + lbl + "_" + TimeToString(bStart, TIME_DATE|TIME_MINUTES);
@@ -1521,6 +1565,109 @@ private:
    }
 
    //+------------------------------------------------------------------+
+   //| Phase 3 Evaluator: Dynamic Buffer Calculation                    |
+   //| Formula: Buffer = min(DeltaSwing_10, 2.0 * BaseHeight)           |
+   //+------------------------------------------------------------------+
+   void EvaluatePhase3_DynamicBuffer(const string symbol, SRBRDBDArea &area)
+   {
+      ENUM_TIMEFRAMES tf = area.period;
+      if(tf <= 0) tf = PERIOD_CURRENT;
+
+      // Find the bar index of baseStart on origin timeframe
+      int baseStartBar = iBarShift(symbol, tf, area.baseStart, false);
+      if(baseStartBar < 0) baseStartBar = 1;
+
+      // Scan prior 10 candles: from (baseStartBar + 1) to (baseStartBar + 10)
+      int swingLookback = 10;
+      int startIdx = baseStartBar + 1;
+
+      MqlRates rates[];
+      ArraySetAsSeries(rates, true);
+      int copied = CopyRates(symbol, tf, startIdx, swingLookback, rates);
+
+      double extremeLevel = 0.0;
+      double deltaSwing = 0.0;
+
+      if(copied > 0)
+      {
+         if(area.type == RBRDBD_RBR)
+         {
+            // For RBR (Floor): Find LowestLow of prior 10 candles
+            extremeLevel = rates[0].low;
+            for(int k = 1; k < copied; k++)
+            {
+               if(rates[k].low < extremeLevel)
+                  extremeLevel = rates[k].low;
+            }
+
+            // Distance from Distal (Demand Low) down to LowestLow
+            if(extremeLevel < area.distal)
+               deltaSwing = area.distal - extremeLevel;
+            else
+               deltaSwing = 0.0; // Distal is already lower than previous 10 candles
+         }
+         else
+         {
+            // For DBD (Roof): Find HighestHigh of prior 10 candles
+            extremeLevel = rates[0].high;
+            for(int k = 1; k < copied; k++)
+            {
+               if(rates[k].high > extremeLevel)
+                  extremeLevel = rates[k].high;
+            }
+
+            // Distance from Distal (Supply High) up to HighestHigh
+            if(extremeLevel > area.distal)
+               deltaSwing = extremeLevel - area.distal;
+            else
+               deltaSwing = 0.0; // Distal is already higher than previous 10 candles
+         }
+      }
+
+      // Component B: 2.0x Base Height formula
+      double deltaBaseFormula = 2.0 * area.zoneHeight;
+
+      // Safe minimum buffer: at least 20% of zone height or 10 points
+      double minBuffer = MathMax(area.zoneHeight * 0.20, 10.0 * _Point);
+
+      // Buffer Selection Logic:
+      // If deltaSwing is strictly positive and smaller than deltaBaseFormula: use 10-candle swing
+      // Else: use 2.0x base formula (or fallback if deltaSwing is 0)
+      double selectedBuffer = 0.0;
+      ENUM_BUFFER_TYPE bType = BUFFER_TYPE_NONE;
+
+      if(deltaSwing > minBuffer && deltaSwing <= deltaBaseFormula)
+      {
+         selectedBuffer = deltaSwing;
+         bType          = BUFFER_TYPE_10_SWING;
+      }
+      else
+      {
+         selectedBuffer = MathMax(deltaBaseFormula, minBuffer);
+         bType          = BUFFER_TYPE_2X_BASE;
+      }
+
+      // Save calculated properties
+      area.swing10Extreme   = extremeLevel;
+      area.deltaSwing       = deltaSwing;
+      area.deltaBaseFormula = deltaBaseFormula;
+      area.bufferPoints     = NormalizeDouble(selectedBuffer / _Point, 1);
+      area.bufferType       = bType;
+
+      // Establish Final Boundary Price
+      if(area.type == RBRDBD_RBR)
+      {
+         // Final Floor = Distal - Buffer
+         area.finalBoundary = NormalizeDouble(area.distal - selectedBuffer, _Digits);
+      }
+      else
+      {
+         // Final Roof = Distal + Buffer
+         area.finalBoundary = NormalizeDouble(area.distal + selectedBuffer, _Digits);
+      }
+   }
+
+   //+------------------------------------------------------------------+
    //| Recursive MTF Base Consolidation Scanner                         |
    //| If base candles are excessive in M1 (> maxBaseCandles),          |
    //| climb TF ladder to check if it compacts into 1-3 boring candles   |
@@ -1794,8 +1941,16 @@ private:
          else
             statusStr = "Fresh";
 
-         // Combined concise label: e.g. " M1 RBR [2C|BOS (+1pt)] • Fresh"
-         string finalLabel = StringFormat(" %s %s [%s|%s] • %s", tfStr, typeStr, cInfo, scoreStr, statusStr);
+         // Phase 3 Buffer info (if enabled)
+         string bufStr = "";
+         if(m_enablePhase3 && area.bufferPoints > 0.0)
+         {
+            string bTag = (area.bufferType == BUFFER_TYPE_10_SWING) ? "10Sw" : "2xBase";
+            bufStr = StringFormat("|Buf:%.0fpt(%s)", area.bufferPoints, bTag);
+         }
+
+         // Combined concise label: e.g. " M1 RBR [2C|TBFH 4★|Str2|Buf:45pt(2xBase)] • Fresh"
+         string finalLabel = StringFormat(" %s %s [%s|%s%s] • %s", tfStr, typeStr, cInfo, scoreStr, bufStr, statusStr);
 
          // High-contrast text color & positioning
          // For RBR (Demand): place text slightly below bottom edge
@@ -1950,6 +2105,64 @@ private:
                ObjectDelete(0, htfSwLineName);
             if(ObjectFind(0, htfSwTagName) >= 0)
                ObjectDelete(0, htfSwTagName);
+         }
+
+         // Draw / Update Phase 3 Dynamic Buffer Line & Label (Final Floor / Final Roof)
+         string bufLineName = rectName + "_buf";
+         string bufTagName  = rectName + "_buftag";
+         if(m_enablePhase3 && area.bufferPoints > 0.0 && area.finalBoundary > 0.0)
+         {
+            datetime bufStart = area.baseStart;
+            datetime bufEnd   = futureTime;
+            if(area.isInvalid && area.invalidTime > 0)
+            {
+               bufEnd = area.invalidTime;
+            }
+
+            color bufColor = (area.type == RBRDBD_RBR) ? clrMediumSeaGreen : clrCrimson;
+
+            // 1. Horizontal Buffer Line (Dashed)
+            if(ObjectFind(0, bufLineName) < 0)
+            {
+               ObjectCreate(0, bufLineName, OBJ_TREND, 0, bufStart, area.finalBoundary, bufEnd, area.finalBoundary);
+            }
+            else
+            {
+               ObjectMove(0, bufLineName, 0, bufStart, area.finalBoundary);
+               ObjectMove(0, bufLineName, 1, bufEnd, area.finalBoundary);
+            }
+            ObjectSetInteger(0, bufLineName, OBJPROP_COLOR, bufColor);
+            ObjectSetInteger(0, bufLineName, OBJPROP_STYLE, STYLE_DASHDOTDOT);
+            ObjectSetInteger(0, bufLineName, OBJPROP_WIDTH, 1);
+            ObjectSetInteger(0, bufLineName, OBJPROP_RAY_RIGHT, false);
+            ObjectSetInteger(0, bufLineName, OBJPROP_BACK, true);
+
+            // 2. Buffer Tag
+            string bTypeName = (area.bufferType == BUFFER_TYPE_10_SWING) ? "10-Sw" : "2xBase";
+            string boundaryName = (area.type == RBRDBD_RBR) ? "Final Floor" : "Final Roof";
+            string bTagText = StringFormat("── %s: %.2f [Buf: %.0fpt (%s)]", boundaryName, area.finalBoundary, area.bufferPoints, bTypeName);
+
+            if(ObjectFind(0, bufTagName) < 0)
+            {
+               ObjectCreate(0, bufTagName, OBJ_TEXT, 0, bufStart, area.finalBoundary);
+            }
+            else
+            {
+               ObjectMove(0, bufTagName, 0, bufStart, area.finalBoundary);
+            }
+            ObjectSetString(0, bufTagName, OBJPROP_TEXT, bTagText);
+            ObjectSetInteger(0, bufTagName, OBJPROP_COLOR, bufColor);
+            ObjectSetInteger(0, bufTagName, OBJPROP_ANCHOR, (area.type == RBRDBD_RBR) ? ANCHOR_LEFT_UPPER : ANCHOR_LEFT_LOWER);
+            ObjectSetInteger(0, bufTagName, OBJPROP_FONTSIZE, 7);
+            ObjectSetString(0, bufTagName, OBJPROP_FONT, "Arial");
+            ObjectSetInteger(0, bufTagName, OBJPROP_BACK, false);
+         }
+         else
+         {
+            if(ObjectFind(0, bufLineName) >= 0)
+               ObjectDelete(0, bufLineName);
+            if(ObjectFind(0, bufTagName) >= 0)
+               ObjectDelete(0, bufTagName);
          }
       }
 

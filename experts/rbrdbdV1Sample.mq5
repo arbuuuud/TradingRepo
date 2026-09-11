@@ -30,6 +30,9 @@ input bool              InpEnablePhase2_4A   = true;              // Enable Phas
 input bool              InpEnablePhase2_4B   = true;              // Enable Phase 2.4B (HTF Swing High/Low Reaction)
 input double            InpMinFVGGapPoints   = 50.0;              // Min FVG Gap in Points (50 pts = $0.50)
 
+input group "=== Phase 3 Dynamic Buffer Calculation ==="
+input bool              InpEnablePhase3      = true;              // Enable Phase 3 Dynamic Buffer (10-Sw vs 2xBase)
+
 input group "=== Dynamic Memory & Garbage Collection ==="
 input bool              InpEnableGC          = true;              // Enable Dynamic Garbage Collection
 input int               InpMaxMemoryBars     = 1500;              // Max Zone Age in M1 Bars before Purge
@@ -53,8 +56,9 @@ int OnInit()
 {
    Print("=== [rbrdbdV1Sample] Initializing Pure M1 RBR/DBD Engine ===");
 
-   // 0. Configure Phase 2 Modular Test Switches
+   // 0. Configure Phase 2 & 3 Modular Test Switches
    ExtRBRDBD.SetPhase2Switches(InpEnablePhase2_1, InpEnablePhase2_2, InpEnablePhase2_3, InpEnablePhase2_4A, InpEnablePhase2_4B, InpMinFVGGapPoints);
+   ExtRBRDBD.SetPhase3Switch(InpEnablePhase3);
 
    // 1. Register Timeframes: M1 (Main Visible) + M15 & H1 (HTF Parent Reference)
    ExtRBRDBD.RegisterTimeframe(PERIOD_M1, 
@@ -128,6 +132,8 @@ void OnTick()
       int total = ArraySize(areas);
       int active = 0, escalated = 0, p21Passed = 0, bosPassed = 0, fvgPassed = 0, htfZonePassed = 0, htfSwingPassed = 0, htfPOIPassed = 0;
       int countStr0 = 0, countStr1 = 0, countStr2 = 0;
+      int countBufSwing = 0, countBuf2xBase = 0;
+      double avgBufferPoints = 0.0;
       for(int i = 0; i < total; i++)
       {
          if(!areas[i].isInvalid) active++;
@@ -142,7 +148,12 @@ void OnTick()
          if(areas[i].strengthLevel == 2) countStr2++;
          else if(areas[i].strengthLevel == 1) countStr1++;
          else countStr0++;
+
+         if(areas[i].bufferType == BUFFER_TYPE_10_SWING) countBufSwing++;
+         else if(areas[i].bufferType == BUFFER_TYPE_2X_BASE) countBuf2xBase++;
+         avgBufferPoints += areas[i].bufferPoints;
       }
+      if(total > 0) avgBufferPoints /= total;
 
       string modeHeader;
       if(InpEnablePhase2_4B && !InpEnablePhase2_1 && !InpEnablePhase2_2 && !InpEnablePhase2_3 && !InpEnablePhase2_4A)
@@ -156,7 +167,7 @@ void OnTick()
       else if(InpEnablePhase2_1 && !InpEnablePhase2_2 && !InpEnablePhase2_3 && !InpEnablePhase2_4A && !InpEnablePhase2_4B)
          modeHeader = "=== RBR/DBD ENGINE (PHASE 2.1 ISOLATED: TIGHTNESS ONLY) ===";
       else
-         modeHeader = "=== RBR/DBD ENGINE (PHASE 2 COMBINED: 4-STAR & DNA TBFH MODE) ===";
+         modeHeader = "=== RBR/DBD ENGINE (PHASE 2 COMBINED + PHASE 3 DYNAMIC BUFFER) ===";
 
       string qualityBreakdown;
       if(InpEnablePhase2_4B && !InpEnablePhase2_1 && !InpEnablePhase2_2 && !InpEnablePhase2_3 && !InpEnablePhase2_4A)
@@ -172,8 +183,10 @@ void OnTick()
          qualityBreakdown = StringFormat("BOS Pass Rate: %d / %d Zones (%.1f%%)", bosPassed, total, total > 0 ? (bosPassed * 100.0 / total) : 0.0);
       else
          qualityBreakdown = StringFormat("Pillars: [T]:%d | [B]:%d | [F]:%d | [H]:%d\n" +
-                                         "Strength: Str0(Weak):%d | Str1(Mod):%d | Str2(A+):%d (Total:%d)", 
-                                         p21Passed, bosPassed, fvgPassed, htfPOIPassed, countStr0, countStr1, countStr2, total);
+                                         "Strength: Str0(Weak):%d | Str1(Mod):%d | Str2(A+):%d (Total:%d)\n" +
+                                         "Phase 3 Buffer: [10-Sw]:%d | [2xBase]:%d | Avg: %.1f pts (%.2f USD)", 
+                                         p21Passed, bosPassed, fvgPassed, htfPOIPassed, countStr0, countStr1, countStr2, total,
+                                         countBufSwing, countBuf2xBase, avgBufferPoints, avgBufferPoints * _Point);
 
       Comment(StringFormat("%s\n" +
                            "Total Zones: %d | Active: %d | Escalated (M3/M5): %d\n" +
