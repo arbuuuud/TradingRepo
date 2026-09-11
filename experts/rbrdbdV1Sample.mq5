@@ -81,33 +81,17 @@ void OnDeinit(const int reason)
 void OnTick()
 {
    static datetime lastM1Bar = 0;
-   static int tickCounter = 0;
    static bool historyLoaded = false;
    datetime currentM1Bar = iTime(_Symbol, PERIOD_M1, 0);
 
-   // Strategy Tester / Live warmup: MT5 Tester takes a few initial ticks to synchronize historical bars
+   // Strategy Tester / Live Warmup
    if(!historyLoaded)
    {
-      tickCounter++;
-      // Attempt every 5 ticks until we get at least 1 zone or until 50 ticks passed
-      if(tickCounter == 1 || (tickCounter % 5 == 0 && tickCounter <= 50))
-      {
-         int totalBars = iBars(_Symbol, PERIOD_M1);
-         if(totalBars >= (InpMaxBaseM1 + 5))
-         {
-            ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars);
-            if(ExtRBRDBD.GetValidAreasCount(PERIOD_M1) > 0 || totalBars > 50)
-            {
-               historyLoaded = true;
-               PrintFormat("[rbrdbdV1Sample] Warmup complete on tick %d. Bars available: %d. Zones: %d",
-                           tickCounter, totalBars, ExtRBRDBD.GetValidAreasCount(PERIOD_M1));
-            }
-         }
-      }
-      else if(tickCounter > 50)
-      {
-         historyLoaded = true; // stop retrying
-      }
+      historyLoaded = true;
+      Print("[rbrdbdV1Sample] Executing InitHistory on first tick...");
+      ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars);
+      PrintFormat("[rbrdbdV1Sample] InitHistory finished. Active zones on chart: %d", ExtRBRDBD.GetValidAreasCount(PERIOD_M1));
+      ChartRedraw(0);
    }
 
    // 1. Event-driven update on completed candle close

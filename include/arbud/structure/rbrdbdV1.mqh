@@ -773,7 +773,9 @@ private:
       int total = ArraySize(data.areas);
       if(total <= 0) return;
 
-      datetime futureTime = TimeCurrent() + (PeriodSeconds(data.tf) * 15);
+      datetime currentTime = TimeCurrent();
+      if(currentTime <= 0) currentTime = iTime(_Symbol, data.tf, 0);
+      datetime futureTime = currentTime + (PeriodSeconds(data.tf) * 15);
 
       for(int a = 0; a < total; a++)
       {
@@ -807,7 +809,11 @@ private:
          }
 
          // Draw / Update Rectangle
-         if(!ObjectCreate(0, rectName, OBJ_RECTANGLE, 0, area.baseStart, topPrice, rectEndTime, botPrice))
+         if(ObjectFind(0, rectName) < 0)
+         {
+            ObjectCreate(0, rectName, OBJ_RECTANGLE, 0, area.baseStart, topPrice, rectEndTime, botPrice);
+         }
+         else
          {
             ObjectMove(0, rectName, 0, area.baseStart, topPrice);
             ObjectMove(0, rectName, 1, rectEndTime, botPrice);
@@ -836,7 +842,11 @@ private:
             statusStr = StringFormat(" %s %s %s (Fresh)", tfStr, typeStr, baseInfo);
 
          // Draw / Update Text (pinned to baseStart)
-         if(!ObjectCreate(0, textName, OBJ_TEXT, 0, area.baseStart, topPrice))
+         if(ObjectFind(0, textName) < 0)
+         {
+            ObjectCreate(0, textName, OBJ_TEXT, 0, area.baseStart, topPrice);
+         }
+         else
          {
             ObjectMove(0, textName, 0, area.baseStart, topPrice);
          }
