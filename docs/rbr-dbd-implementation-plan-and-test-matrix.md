@@ -1,173 +1,218 @@
-# Rencana Implementasi & Matriks Uji Coba: RBR & DBD High-Probability Generator (XAUUSD)
+# Cetak Biru Arsitektur & Tahapan Implementasi: Living Trading Area & Dual Proactive Agent Framework (XAUUSD M3)
 
-> **Dokumen Perencanaan Pengembangan Bertahap (Step-by-Step Implementation & Test Matrix)**  
-> **Target:** `include/arbud/structure/rbrdbdV1.mqh` & `experts/rbrdbdV1Sample.mq5` (serta strategi turunan)  
-> **Instrumen:** XAUUSD (Gold) | **Primary TF:** M3 (dengan MTF M1, M5, M15, H1)  
-> **Status:** Draft Perencanaan & Brainstorming  
-
----
-
-## 🧭 Prinsip Pengembangan (Engineering Principles)
-
-1. **Modularitas Tanpa Gandeng Liar (*Loose Coupling*)**:
-   - Tiap filter diimplementasikan sebagai fungsi evaluasi independen (dapat di-ON/OFF via parameter input untuk keperluan isolasi pengujian dan backtest).
-2. **Event-Driven & Efisiensi CPU**:
-   - Kalkulasi formasi pola hanya dievaluasi pada `OnCandleClose` (saat lilin selesai terbentuk).
-   - `OnTick` hanya difungsikan secara ringan untuk memperbarui penetrasi harga (retest tracking) dan eksekusi order.
-3. **Verifikasi Visual First**:
-   - Setiap kali step baru selesai diimplementasikan, hasilnya wajib langsung divisualisasikan pada chart MT5 (kotak zona, label info, garis BOS/ChoCH, blok FVG) agar developer dan trader dapat langsung melakukan audit visual secara objektif.
+> **Spesifikasi Rekayasa Sistem Algoritmik S&D Terpadu**  
+> **Target Arsitektur:** Single-TF Focus (M3) $\rightarrow$ Living TradingArea Object $\rightarrow$ Proactive Limit Grid Engine $\rightarrow$ Proactive Loss Prevention Engine  
+> **Target File:** `include/arbud/structure/` & `experts/rbrdbdV1Sample.mq5` (serta Next-Gen EA)  
+> **Instrumen:** XAUUSD (Gold) | **Base Timeframe:** M3  
 
 ---
 
-## 🏗️ Tahapan Implementasi Bertahap (Step-by-Step Roadmap)
+## 🧠 Filosofi Desain Sistem (System Architecture Core)
+
+Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke dalam 4 pilar modular:
+1. **Pure Pattern Storage & Memory Lifecycle**: Objek RBR dan DBD disimpan rapi di memori dinamis, terhubung dengan lifecycle harga, dan dibersihkan otomatis saat tidak lagi relevan (*garbage collected*).
+2. **Buffer Algoritmik Min-Variance**: Penentuan batas atas Roof dan batas bawah Floor menggunakan komparasi cerdas antara struktur ekstrem 10 candle ke belakang vs formula $2 \times \text{Base Height}$ (mengambil nilai terkecil/paling konservatif).
+3. **Living TradingArea (Stateful Living Object)**: Objek dinamis yang membungkus 1 Floor (RBR) dan 1 Roof (DBD), memetakan area transaksi Buy (0–25%), Sell (0–25% dari Roof), Hard TP (tepat di 50%), Hard SL (30% di luar batas), serta secara *realtime* mengelola status kelelahan zona (**Exhaustion Level 0 sampai 5**).
+4. **Dual Proactive Autonomous Agents**:
+   - **Agent 1: Proactive Limit Order Placer**: Memasang grid pending order limit hanya pada sub-area yang belum tersentuh (*fresh depth*), dengan alokasi lot/jumlah posisi yang menyesuaikan *exhaustion level* secara proporsional (*round down*).
+   - **Agent 2: Proactive Loss Prevention & Order Guard**: Secara proaktif memantau posisi aktif dan pending order. Jika terdeteksi sinyal pembalikan (*engulfing, doji, hammer*) atau pembentukan RBR/DBD lawan di harga saat ini, agen langsung menutup posisi (*emergency cut*) dan membatalkan pending order yang berisiko.
+
+---
+
+## 🗺️ Roadmap Tahapan Implementasi (Step-by-Step Milestones)
 
 ```
-[ Step 1: Base Geometry & Retest Tracking ] ──► [ Step 2: FVG Menempel (Direct Retest Magnet) ]
-                                                                       │
-                                                                       ▼
-[ Step 4: MTF Reflection & HTF POI Gate ]  ◄── [ Step 3: Body Close BOS / ChoCH ]
-             │
-             ▼
-[ Step 5: OB Tagging (Decisional vs Extreme) ]
-             │
-             ▼
-[ Step 6: Big Figure Sweep & Final Backtest ]
+[ PHASE 1: Pure M3 RBR/DBD Memory & Lifecycle ] 
+       │
+       ▼
+[ PHASE 2: Dynamic Buffer Calculation (10-Candle Swing vs 2x Base) ]
+       │
+       ▼
+[ PHASE 3: Living TradingArea Engine & 6-Stage Exhaustion State Machine ]
+       │
+       ▼
+[ PHASE 4: Agent Proactive Limit Order Grid (Dynamic Allocation & Depth Mapping) ]
+       │
+       ▼
+[ PHASE 5: Agent Proactive Loss Prevention (Price Action & Counter RBR/DBD Guard) ]
+       │
+       ▼
+[ PHASE 6: Integrated End-to-End Simulation & Verification ]
 ```
 
 ---
 
-### 🔹 STEP 1: Penguatan Kepadatan Base & Retest/Mitigation Engine (Foundation)
-*Status: Selesai di-refactor (Base), Siap Ditingkatkan*
+## 📋 Rincian Tahapan, Logika Matematis, & Harapan Hasil Uji (Expected Results)
 
-#### 🎯 Deskripsi & Logika:
-- Deteksi murni triplet lilin: `Leg-In` $\rightarrow$ `Base (1–5 lilin)` $\rightarrow$ `Leg-Out`.
-- **Kepadatan Base (*Base Tightness*)**:
-  - Ukur rasio *Total Range Base* terhadap rata-rata range lilin.
-  - Saring lilin di dalam Base agar berstatus lilin pasif (*boring candle*): body $\le 60\%-65\%$ dari total candle height.
-- **Dynamic Mitigation / Retest Tracking**:
-  - Tracking penetrasi harga ke zona:
-    - *Fresh*: $0\%$ retest (belum pernah disentuh setelah Leg-Out).
-    - *Retested/Used*: $1\% - 99\%$ penetrasi.
-    - *Mitigated*: $100\%$ ditembus penuh (kotak dipotong pada lilin yang menembus).
+### 🔹 PHASE 1: Penguatan Memory Lifecycle RBR & DBD (M3 Focus)
+*Fokus: Memastikan pool data RBR & DBD di timeframe M3 tersimpan rapi, ringan, dan memiliki siklus hidup yang terdefinisi.*
+
+#### 1. Logika & Mekanisme:
+- **Struct `CRBRDBDMemoryPool`**:
+  - Menyimpan array aktif objek RBR (Demand) dan DBD (Supply) yang terdeteksi murni di M3.
+- **Kriteria Relevansi & Garbage Collection (Pembersihan Otomatis)**:
+  - Objek RBR/DBD dihapus dari memori jika:
+    1. Telah tertembus $100\%$ (*fully mitigated*) dan jarak harga saat ini sudah menjauh melampaui $N$ ATR/points.
+    2. Usia zona melampaui ambang batas bar (*max memory bars*, misal $> 1000$ bar M3).
+    3. Terbentuk struktur baru yang secara hierarki membatalkan relevansi zona tersebut.
+- **Visualisasi**:
+  - Hanya menampilkan zona yang masih relevan/hidup di chart M3.
 
 #### 🧪 Harapan / Expected Test Result:
-1. Chart bersih dari zona acak/lebar; zona RBR/DBD yang muncul memiliki kotak konsolidasi tipis/rapat.
-2. Lilin Leg-Out tidak lagi memuat base yang renggang/lebar.
-3. Saat lilin berikutnya menguji zona, warna kotak dan label berganti *realtime* (Fresh $\rightarrow$ Retested $\rightarrow$ Mitigated).
-4. Kotak yang tertembus $100\%$ tidak memanjang ke masa depan, menjaga chart tetap rapi.
+- Memory footprint stabil (tidak ada kebocoran memori array bertambah terus tanpa batas).
+- Saat zona lama sudah ditembus dan harga bergerak jauh, objek chart terhapus bersih dari layar secara otomatis.
+- Fungsi kueri RBR terdekat di bawah harga dan DBD terdekat di atas harga dapat merespon secara instan ($O(N)$ sangat kecil).
 
 ---
 
-### 🔹 STEP 2: Deteksi Imbalance / Fair Value Gap (FVG) Menempel
+### 🔹 PHASE 2: Penentuan Buffer Algoritmik (10-Candle Extreme vs $2\times$ Base)
+*Fokus: Menentukan garis batas luar yang presisi untuk Floor dan Roof.*
 
-#### 🎯 Deskripsi & Logika:
-- Menguji apakah lilin **Leg-Out** adalah lilin impulsif sejati yang meninggalkan ketidakseimbangan harga (*Imbalance / FVG*).
-- **Syarat FVG RBR (Bullish)**:
-  - Ada gap harga antara `High lilin sebelum Leg-Out` (atau batas atas Base) dengan `Low lilin setelah Leg-Out` (atau lilin berjalan).
-  - Minimal gap: $\ge X$ points (dapat disetel via input, misal $\ge 50-100$ points pada XAUUSD).
-- **Syarat "Menempel Langsung" (*Direct Attached*)**:
-  - Batas bawah FVG harus bersinggungan langsung dengan garis *Proximal* (atap Base RBR) atau selisih maksimal $\le$ beberapa points.
-  - FVG yang terbentuk jauh di atas base (setelah beberapa candle terbang) **ditolak** sebagai magnet entri langsung Base.
+#### 1. Logika & Formulasi Matematis:
+Untuk setiap RBR (Floor) dan DBD (Roof) yang terpilih, kita tetapkan nilai **Buffer**:
+1. **Komponen A (10-Candle Extreme)**:
+   - Dari titik bar awal Base ke belakang 10 candle:
+     - Untuk **Floor (RBR)**: Cari titik terendah terendah ($\text{LowestLow}_{10}$).
+       $$\Delta \text{Swing}_{\text{Floor}} = |\text{Base.distal} - \text{LowestLow}_{10}|$$
+     - Untuk **Roof (DBD)**: Cari titik tertinggi tertinggi ($\text{HighestHigh}_{10}$).
+       $$\Delta \text{Swing}_{\text{Roof}} = |\text{HighestHigh}_{10} - \text{Base.distal}|$$
+2. **Komponen B (Formula $2 \times$ Base Height)**:
+   $$\Delta \text{BaseFormula} = 2.0 \times \text{Base.zoneHeight}$$
+3. **Seleksi Buffer (Ambil Nilai Paling Sedikit/Konservatif)**:
+   $$\text{Buffer} = \min(\Delta \text{Swing}, \Delta \text{BaseFormula})$$
+4. **Penetapan Batas Akhir**:
+   - **Garis Final Floor**: $\text{Base.distal} - \text{Buffer}_{\text{Floor}}$
+   - **Garis Final Roof**: $\text{Base.distal} + \text{Buffer}_{\text{Roof}}$
 
 #### 🧪 Harapan / Expected Test Result:
-1. Setiap zona RBR/DBD yang valid akan memiliki indikator visual tambahan: area bayangan FVG tipis tepat di atas Base (RBR) atau di bawah Base (DBD).
-2. Zona-zona RBR/DBD yang Leg-Out-nya lambat atau bertahap (tidak meninggalkan FVG) otomatis tereliminasi (*filtered out*).
-3. Terbukti di chart: Ketika harga retest turun ke FVG yang menempel ini, harga langsung bereaksi di batas Base tanpa drop terlalu dalam.
+- Pada chart, garis Floor dan Roof memiliki batas penyangga (*buffer line*) yang proporsional.
+- Jika ada *spike* anomali tajam pada 10 candle ke belakang, formula $2 \times \text{Base}$ mencegah buffer menjadi terlalu lebar secara tidak wajar.
+- Sebaliknya, jika base sangat mini namun pergerakan harga stabil, swing 10 candle menjaga buffer agar tidak terlalu sempit (mencegah *noise stop out*).
 
 ---
 
-### 🔹 STEP 3: Validasi BOS dan ChoCH (Wajib Body Close)
+### 🔹 PHASE 3: Objek `Living TradingArea` & Mesin Status Kelelahan (Exhaustion Level 0–5)
+*Fokus: Menciptakan objek "hidup" yang menghubungkan Floor dan Roof serta memantau saturasi area secara realtime.*
 
-#### 🎯 Deskripsi & Logika:
-- Mencegah pola RBR/DBD palsu yang hanya terbentuk di tengah ayunan tanpa mematahkan struktur pasar.
-- Mengintegrasikan engine swing point (High/Low sebelumnya).
-- **Aturan Body Close**:
-  - **RBR**: Lilin Leg-Out **wajib ditutup (Close)** di atas Swing High terdekat sebelumnya. Jika hanya *wick* (ekor) yang melewati swing high lalu close di bawahnya, itu adalah *Liquidity Sweep*, bukan BOS! Zona RBR tersebut dinyatakan **INVALID**.
-  - **DBD**: Lilin Leg-Out **wajib ditutup (Close)** di bawah Swing Low terdekat sebelumnya. Jika hanya wick yang menembus, dinyatakan **INVALID**.
-- Mengklasifikasikan apakah penembusan tersebut adalah kelanjutan (*BOS*) atau pembalikan arah (*ChoCH*).
+#### 1. Definisi Geometri & Level Harga `TradingArea`:
+- **Rentang Area ($\text{Range}$)**:
+  $$\text{Range} = \text{Final Roof} - \text{Final Floor}$$
+- **Titik Kunci**:
+  - **Roof (100%)**: Batas atas zona DBD (+ Buffer).
+  - **Floor (0%)**: Batas bawah zona RBR (- Buffer).
+  - **Hard TP (50%)**: Tepat di tengah-tengah:
+    $$\text{TP}_{50} = \text{Final Floor} + (0.50 \times \text{Range})$$
+  - **Sell Area**: Rentang $75\% - 100\%$ (yaitu $0\% - 25\%$ dihitung turun dari Roof).
+    $$\text{SellZone}_{\text{Start}} = \text{Final Roof} - (0.25 \times \text{Range}), \quad \text{SellZone}_{\text{End}} = \text{Final Roof}$$
+  - **Buy Area**: Rentang $0\% - 25\%$ dihitung naik dari Floor.
+    $$\text{BuyZone}_{\text{Start}} = \text{Final Floor}, \quad \text{BuyZone}_{\text{End}} = \text{Final Floor} + (0.25 \times \text{Range})$$
+  - **Roof Hard SL (-30% dari batas atas)**:
+    $$\text{Roof}_{\text{HardSL}} = \text{Final Roof} + (0.30 \times \text{Range})$$
+  - **Floor Hard SL (-30% dari batas bawah)**:
+    $$\text{Floor}_{\text{HardSL}} = \text{Final Floor} - (0.30 \times \text{Range})$$
+
+#### 2. Mesin Status Kelelahan (*Living Exhaustion State Machine*):
+Status kelelahan dipantau independen untuk **Buy Area** dan **Sell Area**:
+- **Level 0 (Fresh / 0% Touched)**: Harga belum pernah masuk sama sekali ke area $0-25\%$. Ruang penetrasi masih murni $100\%$.
+- **Level 1 (25% Consumed)**: Harga telah menembus sedalam $\ge 25\%$ dari ketebalan area transaksi ($0.25 \times \text{SubRange}$).
+- **Level 2 (50% Consumed)**: Harga telah menembus sedalam $\ge 50\%$ dari ketebalan area transaksi.
+- **Level 3 (75% Consumed)**: Harga telah menembus sedalam $\ge 75\%$ dari ketebalan area transaksi.
+- **Level 4 (> 75% Consumed)**: Penetrasi di atas $75\%$ namun belum menyentuh $100\%$. Sinyal bahaya saturasi tinggi.
+- **Level 5 (100% Fully Exhausted)**: Area transaksi telah tertembus total ($100\%$). Area dinyatakan mati / *invalidated*.
 
 #### 🧪 Harapan / Expected Test Result:
-1. Jumlah zona RBR/DBD berkurang drastis $\approx 40\%-60\%$ dibanding Step 1, namun zona yang tersisa memiliki *win-rate* reaksi yang sangat tinggi.
-2. Di chart muncul garis horizontal putus-putus berlabel `BOS` atau `ChoCH` yang ditarik dari swing yang ditembus oleh Leg-Out.
-3. Tereliminasi semua kasus "fakeout breakout" di mana harga hanya menjilat High lalu berbalik arah turun tajam.
+- Kotak `TradingArea` terlukis rapi di chart: area Buy (bawah), area Sell (atas), garis tengah Hard TP 50%, dan garis putus-putus Hard SL $\pm 30\%$.
+- Terdapat HUD/Label interaktif di chart yang menampilkan:
+  - `TradingArea #ID | Buy Exhaustion: Level [0-5] (X%) | Sell Exhaustion: Level [0-5] (Y%)`.
+- Saat harga bergerak naik/turun mengikis area, angka persentase dan level kelelahan langsung naik secara presisi (*one-way ratchet*: tidak bisa turun kembali ke level 0 jika sudah tertembus).
 
 ---
 
-### 🔹 STEP 4: Refleksi Multi-Timeframe (MTF) & HTF POI Gatekeeper
+### 🔹 PHASE 4: Agent Proactive Limit Order Placer (Dynamic Grid & Fresh Depth Mapping)
+*Fokus: Agen proaktif yang menghitung alokasi posisi dan menempatkan limit order hanya pada kedalaman harga yang masih perawan.*
 
-#### 🎯 Deskripsi & Logika:
-- **Refleksi HTF**:
-  - Saat Base terbentuk di M3 (terdiri dari 1–5 lilin M3), sistem memeriksa candle di M15/H1 pada rentang waktu yang sama.
-  - Base M3 wajib tampak sebagai **1–3 lilin bersih/kompak di M15**. Jika di M15 terlihat lilin raksasa atau tren panjang, base M3 tersebut dianggap *noise* dan diabaikan.
-- **HTF POI Gatekeeper (Anti-No Man's Land)**:
-  - Base M1–M5 **tidak boleh berdiri sendiri di tengah ruang kosong**.
-  - RBR M3 hanya valid jika titik awal Leg-In bersumber dari reaksi pantulan pada zona Demand M15/H1.
-  - DBD M3 hanya valid jika titik awal Leg-In bersumber dari reaksi pantulan pada zona Supply M15/H1.
+#### 1. Aturan Alokasi Posisi Berdasarkan Exhaustion Level:
+Diberikan parameter input `Max_Pos_per_Trading_Area` (misal $= 10$ posisi):
+- **Formula Alokasi Kapasitas**:
+  $$\text{AllowedPositions} = \text{Floor}\left(\text{Max\_Pos} \times \text{Factor}(\text{ExhaustionLevel})\right)$$
+  - **Level 0 (Fresh)**: Kapasitas $100\%$ $\rightarrow \lfloor 10 \times 1.0 \rfloor = 10$ order.
+  - **Level 1 (25% touched)**: Kapasitas tersisa $75\%$ $\rightarrow \lfloor 10 \times 0.75 \rfloor = 7$ order.
+  - **Level 2 (50% touched)**: Kapasitas tersisa $50\%$ $\rightarrow \lfloor 10 \times 0.50 \rfloor = 5$ order.
+  - **Level 3 (75% touched)**: Kapasitas tersisa $25\%$ $\rightarrow \lfloor 10 \times 0.25 \rfloor = 2$ order.
+  - **Level 4 (>75% touched)**: Kapasitas tersisa $10\%$ $\rightarrow \lfloor 10 \times 0.10 \rfloor = 1$ order (atau $0$ jika diset konservatif).
+  - **Level 5 (100% exhausted)**: Kapasitas $0\%$ $\rightarrow 0$ order (semua limit tersisa wajib dicancel).
+
+#### 2. Pemetaan Kedalaman Segar (*Fresh Depth Placement*):
+- Agen **dilarang menaruh limit order pada koordinat harga yang sudah pernah ditembus** oleh ekor candle sebelumnya.
+- Jika area sudah berada di Level 2 (50% sudah tertembus), agen hanya membagi sisa kuota order (misal 5 order) secara merata di dalam rentang $50\% - 100\%$ sub-area yang masih *fresh*.
+- Setiap limit order otomatis memiliki:
+  - **TP**: Terpasang tepat di level **Hard TP 50%**.
+  - **SL**: Terpasang tepat di level **Hard SL $\pm 30\%$**.
 
 #### 🧪 Harapan / Expected Test Result:
-1. Zona RBR/DBD M3 hanya akan muncul saat pasar memang sedang berada di area diskon/premium HTF.
-2. Tidak ada lagi sinyal Buy RBR di pucuk tren (*overbought*) atau Sell DBD di dasar jurang (*oversold*).
-3. Konsistensi arah: Sinyal M3 bergerak serasi dengan arus pergerakan modal besar institusi di TF M15/H1.
+- Limit order tidak pernah bertumpuk di harga yang sudah dilewati (*no reordering in breached levels*).
+- Jumlah limit order yang aktif selalu sesuai dengan kuota pembulatan ke bawah (*round down*).
+- Ketika harga menyentuh TP 50%, seluruh posisi profit ter-liquidasi dan sisa pending limit dibatalkan secara bersih.
 
 ---
 
-### 🔹 STEP 5: Klasifikasi Order Block (OB): Decisional vs. Extreme
+### 🔹 PHASE 5: Agent Proactive Loss Prevention (Price Action & Counter RBR/DBD Guard)
+*Fokus: Agen pengawal risiko yang memantau floating position secara aktif untuk keluar dini sebelum terkena Hard SL.*
 
-#### 🎯 Deskripsi & Logika:
-- Membedah anatomi lilin untuk menentukan titik entri paling optimal:
-  - **Decisional Zone**:
-    - Candle berlawanan arah terakhir (misal candle bearish terakhir sebelum rally) berada **tepat di dalam Base**.
-    - Ditandai sebagai zona entri agresif/utama jika pasar memiliki momentum tinggi.
-  - **Extreme Zone**:
-    - Candle berlawanan arah terakhir berada di **akar/pangkal Leg-In**.
-    - Base RBR difungsikan sebagai Decisional (TP pertama atau scalping cepat), sedangkan pangkal Leg-In ditandai sebagai zona pengaman ekstrem (*low-risk pullback*).
+#### 1. Pemicu Deteksi Reversal (*Proactive Cut Conditions*):
+Agen terus memonitor pergerakan candle M3 (dan live tick) saat posisi aktif terbuka:
+1. **Pola Candlestick Reversal Kuat**:
+   - Terbentuk **Bearish Engulfing** (untuk posisi Buy aktif) atau **Bullish Engulfing** (untuk posisi Sell aktif).
+   - Terbentuk **Doji Breakdown/Breakout** yang mematahkan momentum.
+   - Terbentuk **Hammer / Shooting Star / Pinbar** dengan panjang ekor penolakan $\ge 60\%$ menentang arah posisi kita.
+2. **Pembentukan Counter RBR / DBD**:
+   - Jika kita sedang memegang posisi **Buy** di Floor, namun tiba-tiba di atas harga berjalan terbentuk **DBD baru (Supply baru)** yang menolak kenaikan harga.
+   - Jika kita sedang memegang posisi **Sell** di Roof, namun tiba-tiba di bawah harga berjalan terbentuk **RBR baru (Demand baru)**.
+
+#### 2. Tindakan Eksekusi Agen:
+- **Tutup Posisi Aktif Segera**: Melakukan market close seketika (*Emergency Early Exit*) untuk mengamankan sisa modal atau mengunci profit kecil.
+- **Batalkan Sisa Pending Order**: Membatalkan semua limit order yang tersisa pada `TradingArea` tersebut agar tidak terjemput oleh momentum lawan.
+- **Lockout Area**: Mengunci `TradingArea` tersebut ke status *Cool-Down* agar agen pembuat order tidak memasang order baru kembali ke area yang sudah berbahaya.
 
 #### 🧪 Harapan / Expected Test Result:
-1. Kotak zona pada chart menampilkan badge/teks: `[DECISIONAL]` atau `[EXTREME]`.
-2. Trader/EA memiliki rencana ganda: jika Decisional tertembus, sistem tidak panik karena level Extreme telah dipetakan sebagai benteng pertahanan terakhir.
+- Saat harga gagal memantul dan membentuk *engulfing* berlawanan, EA tidak menunggu harga menyeret akun hingga menyentuh Hard SL 30%. Kerugian berhasil dipotong jauh lebih kecil.
+- Tidak ada limit order tertinggal yang tereksekusi secara sengaja ke arah tren lawan yang baru meledak.
+- Log jurnal MT5 mencatat alasan penutupan dengan jelas: `[PROACTIVE GUARD] Closed Pos #12345 due to Bearish Engulfing / Counter DBD detected!`.
 
 ---
 
-### 🔹 STEP 6: Big Figure Liquidity Sweep Confluence & Final Backtest
+### 🔹 PHASE 6: Integrasi Sistem Penuh, Logging & Backtest Benchmark
+*Fokus: Penggabungan seluruh komponen menjadi EA utuh yang teruji di Strategy Tester Wine MT5.*
 
-#### 🎯 Deskripsi & Logika:
-- **Deteksi Level Psikologis Bulat XAUUSD**:
-  - Level-level penting: kelipatan `$10.0` (misal 2650.00, 2660.00) dan `$50.0` (2600.00, 2650.00, 2700.00).
-- **Pemeriksaan Sweep**:
-  - Jika Base terbentuk dalam jarak $\le 20-30$ pips dari level Big Figure:
-    - Apakah ekor candle Base pernah menembus level tersebut lalu kembali masuk sebelum Leg-Out meledak?
-    - Jika **YA** (sudah sweep likuiditas): Zona berstatus **HIGH CONFLUENCE (A+ Setup)**.
-    - Jika **TIDAK** (hanya mengambang pasrah di atas/bawah level): Zona diberi tanda bahaya / di-filter keluar untuk menghindari *Stop Hunt trap*.
+#### 1. Skenario Pengujian Komprehensif:
+1. **Uji Kasus Normal (*Ideal Swing*)**:
+   - Harga masuk ke Buy Area Level 0 $\rightarrow$ Jemput 10 order $\rightarrow$ Memantul menuju TP 50%.
+   - *Verifikasi*: Semua order profit ter-close di 50%, sisa order dibersihkan.
+2. **Uji Kasus Penetrasi Parsial (*Step-in Revisit*)**:
+   - Harga masuk 25% (Level 1) $\rightarrow$ Naik sedikit $\rightarrow$ Masuk lagi lebih dalam ke 60% (Level 2).
+   - *Verifikasi*: Order kedua hanya dipasang di kedalaman $>50\%$, kuota berkurang sesuai round down.
+3. **Uji Kasus Pembalikan Mendadak (*Spike Reversal*)**:
+   - Harga masuk Buy Area $\rightarrow$ Jemput 4 posisi $\rightarrow$ Tiba-tiba membentuk Bearish Engulfing besar.
+   - *Verifikasi*: Agent 2 langsung menutup 4 posisi dan menghapus sisa 6 pending order seketika.
 
 #### 🧪 Harapan / Expected Test Result:
-1. Zona yang memiliki label `[BIG FIGURE SWEEP]` menghasilkan respon harga dengan *slippage* rendah dan pergerakan impulsif instan begitu harga kembali menyentuh zona.
-2. Metrik Backtest Komparatif:
-   - Win Rate meningkat signifikan pada XAUUSD (target win-rate zona reaksi $\ge 68\%-75\%$).
-   - *Maximum Drawdown* berkurang drastis karena menyaring setup jebakan di angka bulat.
+- Backtest menghasilkan grafik pertumbuhan ekuitas (*equity curve*) yang stabil dan halus (*smooth*).
+- *Maximum Drawdown* terpangkas secara signifikan berkat peran aktif Agent Proactive Loss Prevention.
+- Zero error, zero memory leak, dan efisiensi eksekusi tinggi di MT5 Wine.
 
 ---
 
-## 📊 Matriks Pengujian & Verifikasi (Test Verification Matrix)
+## 📊 Matriks Status & Verifikasi Tahapan (Roadmap Tracking)
 
-| Step | Modul Yang Diuji | Input / Test Case | Kriteria Kelulusan (Success Criteria) | Status |
+| Phase | Komponen Utama | Milestone Deliverables | Target File | Status |
 |---|---|---|---|:---:|
-| **1** | Base Geometry & Retest Tracking | M3 XAUUSD, Bar history 500 | Base padat $\le 5$ candle, body $\le 65\%$, visual status Fresh/Retested/Mitigated tampil akurat | 🟢 Selesai |
-| **2** | Direct Attached FVG | XAUUSD M3, Min FVG Gap $\ge 50$ pts | Kotak FVG menempel pada Proximal Base; tolak jika Leg-Out lambat tanpa FVG | ⚪ To-Do |
-| **3** | Body Close BOS / ChoCH | XAUUSD M3, Swing detection lookback | Leg-Out wajib Body Close menembus swing; tolak jika hanya wick sweep | ⚪ To-Do |
-| **4** | MTF Reflection & POI Gate | XAUUSD M3 + M15/H1 context | Base M3 tampak 1-3 candle di M15; tolak zona di area No Man's Land | ⚪ To-Do |
-| **5** | OB Tagging (Decisional vs Extreme) | Evaluasi candle sebelum Leg-Out & Leg-In | Label `[DECISIONAL]` dan `[EXTREME]` terpetakan secara presisi di chart | ⚪ To-Do |
-| **6** | Big Figure Sweep Confluence | Level kelipatan 10 / 50 XAUUSD | Validasi apakah level bulat ter-sweep sebelum Leg-Out; saring floating trap | ⚪ To-Do |
+| **1** | M3 RBR/DBD Memory Pool | Storage dinamis & auto-cleanup zona invalid | `rbrdbdV1.mqh` | 🟡 Siap Desain |
+| **2** | Min-Variance Buffer Engine | Evaluasi $\min(\text{Swing}_{10}, 2\times\text{Base})$ untuk Floor & Roof | `rbrdbdV1.mqh` | ⚪ Menunggu Ph 1 |
+| **3** | Living TradingArea & State 0–5 | Objek living area, 6-level exhaustion, Hard TP/SL | `TradingArea.mqh` | ⚪ Menunggu Ph 2 |
+| **4** | Agent Proactive Limit Order | Kuota dinamis, fresh depth grid, auto-cancel pada TP | `AgentGridPlacer.mqh` | ⚪ Menunggu Ph 3 |
+| **5** | Agent Proactive Loss Prevention | Deteksi Engulfing/Doji/Counter-zone, emergency close | `AgentLossGuard.mqh` | ⚪ Menunggu Ph 4 |
+| **6** | Integrated EA & Backtest Suite | Demonstrator terpadu & pengujian di XAUUSD M3 | `rbrdbdV2Sample.mq5` | ⚪ Menunggu Ph 5 |
 
 ---
 
-## 💡 Topik Diskusi & Brainstorming (Untuk Disepakati Bersama)
-
-1. **Toleransi Ukuran FVG Menempel**:
-   - Untuk XAUUSD M3, berapakah ambang batas minimal gap FVG yang dianggap signifikan? (Rekomendasi awal: 50 hingga 100 points / $0.50 - $1.00 pada Gold).
-2. **Definisi Swing Point untuk BOS**:
-   - Berapa bar lookback yang ideal untuk mendeteksi Swing High/Low terdekat sebelum Leg-Out? (Apakah fractal 3-5 bar atau struktur swing zigzag?).
-3. **Prioritas Eksekusi Entri**:
-   - Apakah EA nantinya hanya akan memasang limit order di **Decisional Zone** jika ada konfirmasi FVG, ataukah membagi lot (split risk 50:50 antara Decisional dan Extreme)?
-
----
-*Dokumen ini akan terus diperbarui seiring berjalannya proses brainstorming dan implementasi di TradingRepo.*
+*Dokumen ini merupakan panduan implementasi resmi TradingRepo untuk pengembangan Living TradingArea dan Dual Proactive Agent Framework.*
