@@ -141,14 +141,33 @@ public:
    }
 
    //+------------------------------------------------------------------+
+   //| Parse Strength level from order/position comment                 |
+   //| e.g. "RBR:M1:TBFH:S2:L0" -> returns 2                            |
+   //+------------------------------------------------------------------+
+   int ParseStrengthFromComment(const string comment, const int fallbackStrength = 1) const
+   {
+      int pos = StringFind(comment, ":S");
+      if(pos >= 0 && (pos + 2) < StringLen(comment))
+      {
+         string sStr = StringSubstr(comment, pos + 2, 1);
+         int sVal = (int)StringToInteger(sStr);
+         return MathMax(0, MathMin(2, sVal));
+      }
+      return fallbackStrength;
+   }
+
+   //+------------------------------------------------------------------+
    //| Synchronize SL & TP on TradingArea Change:                       |
-   //| Adjust open positions & limit orders to new area's Hard SL / TP  |
-   //| Auto-close if price already breached new SL or passed new TP     |
+   //| Proactive Loss Prevention & Clash of Strength Logic              |
+   //| No panic close on floating minus! Dynamic Cut Profit & Def SL    |
    //+------------------------------------------------------------------+
    void SyncAreaTransitionRisk(const SLivingTradingArea &area,
                                const double currentBid,
                                const double currentAsk)
    {
+      double spreadBufferPoints = 32.0 * _Point; // 32 points ($0.32) spread buffer on Gold
+      double staticSLPoints     = 500.0 * _Point; // $5.00 static safety margin
+
       // 1. Synchronize & Protect Open Positions
       for(int i = PositionsTotal() - 1; i >= 0; i--)
       {
@@ -160,58 +179,157 @@ public:
          {
             ENUM_POSITION_TYPE pType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
             double posOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            string posComment   = PositionGetString(POSITION_COMMENT);
 
             if(pType == POSITION_TYPE_BUY)
             {
-               double newSL = area.floorHardSL;
-               double newTP = area.hardTP50;
+               // Check if position is floating profit or floating minus
+               bool isFloatingMinus = (currentBid < posOpenPrice);
 
-               // Guard: If current Bid is already below new SL -> Auto close immediately
-               if(currentBid <= newSL)
+               if(!isFloatingMinus)
                {
-                  PrintFormat("[AreaTransition] Auto-closing Buy position #%I64u: Bid %.2f already below new Floor SL %.2f",
-                              ticket, currentBid, newSL);
-                  m_trade.PositionClose(ticket);
-                  continue;
-               }
+                  // FLOATING PROFIT: Secure with BE+ and target new area Hard TP 50%
+                  double newSL = NormalizeDouble(posOpenPrice + (10.0 * _Point), _Digits);
+                  double newTP = area.hardTP50;
+                  if(newTP <= (currentBid + (20.0 * _Point)))
+                     newTP = NormalizeDouble(currentBid + (50.0 * _Point), _Digits);
 
-               // Guard: If current Bid has already reached or passed new TP -> Auto close with profit
-               if(currentBid >= newTP)
+                  m_trade.PositionModify(ticket, newSL, newTP);
+                  PrintFormat("[AreaTransition] Buy #%I64u Floating Profit secured: BE+ SL %.2f, TP %.2f",
+                              ticket, newSL, newTP);
+               }
+               else
                {
-                  PrintFormat("[AreaTransition] Auto-closing Buy position #%I64u: Bid %.2f already reached/passed new TP %.2f",
-                              ticket, currentBid, newTP);
-                  m_trade.PositionClose(ticket);
-                  continue;
-               }
+                  // FLOATING MINUS: CLASH OF STRENGTH & CUT PROFIT / BE ESCAPE ROUTE
+                  int myRBRStrength = ParseStrengthFromComment(posComment, area.floorStrength);
+                  int newDBDStrength = area.roofStrength;
 
-               // Modify position to adopt new SL & TP
-               m_trade.PositionModify(ticket, newSL, newTP);
+                  double targetExit = 0.0;
+
+                  // Clash of Strength:
+                  // If RBR was stronger than new DBD, and DBD proximal is above entry + spread
+                  if(myRBRStrength > newDBDStrength && area.hasOrganicRoof)
+                  {
+                     double dbdProximal = area.roofProximal;
+                     if(dbdProximal > (posOpenPrice + spreadBufferPoints) && dbdProximal > (currentAsk + spreadBufferPoints))
+                     {
+                        // Target Exit = Bibir DBD (Cut Profit!)
+                        targetExit = NormalizeDouble(dbdProximal, _Digits);
+                     }
+                     else
+                     {
+                        // Cannot cut profit at DBD, target Break Even
+                        targetExit = NormalizeDouble(posOpenPrice + spreadBufferPoints, _Digits);
+                     }
+                  }
+                  else
+                  {
+                     // DBD is equal or stronger: Emergency Break Even Evacuation
+                     targetExit = NormalizeDouble(posOpenPrice + spreadBufferPoints, _Digits);
+                  }
+
+                  // Routing Target Exit to TP or SL:
+                  double newTP = 0.0;
+                  double newSL = 0.0;
+
+                  if(targetExit > (currentBid + (20.0 * _Point)))
+                  {
+                     // Target exit is safely above current market price -> set as Take Profit
+                     newTP = targetExit;
+
+                     // Determine Protective SL: Default $5 drop from current price, or Floor Hard SL if closer
+                     double staticSL = NormalizeDouble(currentBid - staticSLPoints, _Digits);
+                     if(area.floorHardSL > staticSL && area.floorHardSL < currentBid)
+                        newSL = area.floorHardSL;
+                     else
+                        newSL = staticSL;
+                  }
+                  else
+                  {
+                     // Price already plunged below target exit: Convert targetExit into Defensive Stop Loss!
+                     newSL = targetExit;
+                     newTP = area.hardTP50;
+                  }
+
+                  m_trade.PositionModify(ticket, newSL, newTP);
+                  PrintFormat("[AreaTransition] Buy #%I64u Floating Minus managed: RBR_Str=%d vs DBD_Str=%d -> New TP %.2f, New SL %.2f",
+                              ticket, myRBRStrength, newDBDStrength, newTP, newSL);
+               }
             }
             else if(pType == POSITION_TYPE_SELL)
             {
-               double newSL = area.roofHardSL;
-               double newTP = area.hardTP50;
+               // Check if position is floating profit or floating minus
+               bool isFloatingMinus = (currentAsk > posOpenPrice);
 
-               // Guard: If current Ask is already above new SL -> Auto close immediately
-               if(currentAsk >= newSL)
+               if(!isFloatingMinus)
                {
-                  PrintFormat("[AreaTransition] Auto-closing Sell position #%I64u: Ask %.2f already above new Roof SL %.2f",
-                              ticket, currentAsk, newSL);
-                  m_trade.PositionClose(ticket);
-                  continue;
-               }
+                  // FLOATING PROFIT: Secure with BE+ and target new area Hard TP 50%
+                  double newSL = NormalizeDouble(posOpenPrice - (10.0 * _Point), _Digits);
+                  double newTP = area.hardTP50;
+                  if(newTP >= (currentAsk - (20.0 * _Point)))
+                     newTP = NormalizeDouble(currentAsk - (50.0 * _Point), _Digits);
 
-               // Guard: If current Ask has already reached or passed new TP -> Auto close with profit
-               if(currentAsk <= newTP)
+                  m_trade.PositionModify(ticket, newSL, newTP);
+                  PrintFormat("[AreaTransition] Sell #%I64u Floating Profit secured: BE+ SL %.2f, TP %.2f",
+                              ticket, newSL, newTP);
+               }
+               else
                {
-                  PrintFormat("[AreaTransition] Auto-closing Sell position #%I64u: Ask %.2f already reached/passed new TP %.2f",
-                              ticket, currentAsk, newTP);
-                  m_trade.PositionClose(ticket);
-                  continue;
-               }
+                  // FLOATING MINUS: CLASH OF STRENGTH & CUT PROFIT / BE ESCAPE ROUTE
+                  int myDBDStrength = ParseStrengthFromComment(posComment, area.roofStrength);
+                  int newRBRStrength = area.floorStrength;
 
-               // Modify position to adopt new SL & TP
-               m_trade.PositionModify(ticket, newSL, newTP);
+                  double targetExit = 0.0;
+
+                  // Clash of Strength:
+                  // If DBD was stronger than new RBR, and RBR proximal is below entry - spread
+                  if(myDBDStrength > newRBRStrength && area.hasOrganicFloor)
+                  {
+                     double rbrProximal = area.floorProximal;
+                     if(rbrProximal < (posOpenPrice - spreadBufferPoints) && rbrProximal < (currentBid - spreadBufferPoints))
+                     {
+                        // Target Exit = Bibir RBR (Cut Profit!)
+                        targetExit = NormalizeDouble(rbrProximal, _Digits);
+                     }
+                     else
+                     {
+                        // Cannot cut profit at RBR, target Break Even
+                        targetExit = NormalizeDouble(posOpenPrice - spreadBufferPoints, _Digits);
+                     }
+                  }
+                  else
+                  {
+                     // RBR is equal or stronger: Emergency Break Even Evacuation
+                     targetExit = NormalizeDouble(posOpenPrice - spreadBufferPoints, _Digits);
+                  }
+
+                  // Routing Target Exit to TP or SL:
+                  double newTP = 0.0;
+                  double newSL = 0.0;
+
+                  if(targetExit < (currentAsk - (20.0 * _Point)))
+                  {
+                     // Target exit is safely below current market price -> set as Take Profit
+                     newTP = targetExit;
+
+                     // Determine Protective SL: Default $5 rise from current price, or Roof Hard SL if closer
+                     double staticSL = NormalizeDouble(currentAsk + staticSLPoints, _Digits);
+                     if(area.roofHardSL < staticSL && area.roofHardSL > currentAsk)
+                        newSL = area.roofHardSL;
+                     else
+                        newSL = staticSL;
+                  }
+                  else
+                  {
+                     // Price already surged above target exit: Convert targetExit into Defensive Stop Loss!
+                     newSL = targetExit;
+                     newTP = area.hardTP50;
+                  }
+
+                  m_trade.PositionModify(ticket, newSL, newTP);
+                  PrintFormat("[AreaTransition] Sell #%I64u Floating Minus managed: DBD_Str=%d vs RBR_Str=%d -> New TP %.2f, New SL %.2f",
+                              ticket, myDBDStrength, newRBRStrength, newTP, newSL);
+               }
             }
          }
       }
