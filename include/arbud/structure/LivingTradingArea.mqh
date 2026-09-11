@@ -46,6 +46,7 @@ struct SLivingTradingArea
    // Floor Geometries (Bottom / Demand Side)
    ENUM_BOUNDARY_SOURCE floorSource;       // Organic RBR, HTF Swing, or ATR
    datetime             floorBaseStart;    // Base formation time (unique identifier)
+   datetime             floorLegOutTime;   // Leg-out formation time (monitoring threshold)
    double               floorBoundary;     // Final Floor Price (Distal - Buffer)
    double               floorDistal;       // Raw Distal
    double               floorProximal;     // Raw Proximal
@@ -58,6 +59,7 @@ struct SLivingTradingArea
    // Roof Geometries (Top / Supply Side)
    ENUM_BOUNDARY_SOURCE roofSource;        // Organic DBD, HTF Swing, or ATR
    datetime             roofBaseStart;     // Base formation time (unique identifier)
+   datetime             roofLegOutTime;    // Leg-out formation time (monitoring threshold)
    double               roofBoundary;      // Final Roof Price (Distal + Buffer)
    double               roofDistal;        // Raw Distal
    double               roofProximal;      // Raw Proximal
@@ -97,6 +99,7 @@ struct SLivingTradingArea
 
       floorSource           = BOUNDARY_ORGANIC_RBRDBD;
       floorBaseStart        = 0;
+      floorLegOutTime       = 0;
       floorBoundary         = 0.0;
       floorDistal           = 0.0;
       floorProximal         = 0.0;
@@ -108,6 +111,7 @@ struct SLivingTradingArea
 
       roofSource            = BOUNDARY_ORGANIC_RBRDBD;
       roofBaseStart         = 0;
+      roofLegOutTime        = 0;
       roofBoundary          = 0.0;
       roofDistal            = 0.0;
       roofProximal          = 0.0;
@@ -432,6 +436,7 @@ private:
          newArea.hasOrganicFloor = true;
          newArea.floorSource     = BOUNDARY_ORGANIC_RBRDBD;
          newArea.floorBaseStart  = floorZone.baseStart;
+         newArea.floorLegOutTime = floorZone.legOutTime;
          newArea.floorBoundary   = floorZone.finalBoundary;
          newArea.floorDistal     = floorZone.distal;
          newArea.floorProximal   = floorZone.proximal;
@@ -449,6 +454,7 @@ private:
             newArea.hasOrganicFloor = false;
             newArea.floorSource     = BOUNDARY_HTF_SWING;
             newArea.floorBaseStart  = 0;
+            newArea.floorLegOutTime = TimeCurrent();
             newArea.floorBoundary   = htfSwingLow - (50.0 * _Point);
             newArea.floorDistal     = htfSwingLow;
             newArea.floorProximal   = htfSwingLow;
@@ -463,6 +469,7 @@ private:
             newArea.hasOrganicFloor = false;
             newArea.floorSource     = BOUNDARY_ATR_PROJECTED;
             newArea.floorBaseStart  = 0;
+            newArea.floorLegOutTime = TimeCurrent();
             newArea.floorBoundary   = NormalizeDouble(midPrice - (1.0 * dailyATR), _Digits);
             newArea.floorDistal     = newArea.floorBoundary;
             newArea.floorProximal   = newArea.floorBoundary;
@@ -476,16 +483,17 @@ private:
       // --- 2. RESOLVE ROOF GEOMETRY ---
       if(hasRoof)
       {
-         newArea.hasOrganicRoof = true;
-         newArea.roofSource     = BOUNDARY_ORGANIC_RBRDBD;
-         newArea.roofBaseStart  = roofZone.baseStart;
-         newArea.roofBoundary   = roofZone.finalBoundary;
-         newArea.roofDistal     = roofZone.distal;
-         newArea.roofProximal   = roofZone.proximal;
-         newArea.roofPeriod     = roofZone.period;
-         newArea.roofStrength   = roofZone.strengthLevel;
-         newArea.roofScore      = roofZone.totalScore;
-         newArea.roofDNA        = roofZone.dnaCode;
+         newArea.hasOrganicRoof  = true;
+         newArea.roofSource      = BOUNDARY_ORGANIC_RBRDBD;
+         newArea.roofBaseStart   = roofZone.baseStart;
+         newArea.roofLegOutTime  = roofZone.legOutTime;
+         newArea.roofBoundary    = roofZone.finalBoundary;
+         newArea.roofDistal      = roofZone.distal;
+         newArea.roofProximal    = roofZone.proximal;
+         newArea.roofPeriod      = roofZone.period;
+         newArea.roofStrength    = roofZone.strengthLevel;
+         newArea.roofScore       = roofZone.totalScore;
+         newArea.roofDNA         = roofZone.dnaCode;
       }
       else
       {
@@ -493,25 +501,27 @@ private:
          double htfSwingHigh = FindHTFSwingHigh(symbol, midPrice);
          if(htfSwingHigh > 0.0 && htfSwingHigh > midPrice)
          {
-            newArea.hasOrganicRoof = false;
-            newArea.roofSource     = BOUNDARY_HTF_SWING;
-            newArea.roofBaseStart  = 0;
-            newArea.roofBoundary   = htfSwingHigh + (50.0 * _Point);
-            newArea.roofDistal     = htfSwingHigh;
-            newArea.roofProximal   = htfSwingHigh;
-            newArea.roofPeriod     = PERIOD_M15;
-            newArea.roofStrength   = 0;
-            newArea.roofScore      = 0;
-            newArea.roofDNA        = "----";
+            newArea.hasOrganicRoof  = false;
+            newArea.roofSource      = BOUNDARY_HTF_SWING;
+            newArea.roofBaseStart   = 0;
+            newArea.roofLegOutTime  = TimeCurrent();
+            newArea.roofBoundary    = htfSwingHigh + (50.0 * _Point);
+            newArea.roofDistal      = htfSwingHigh;
+            newArea.roofProximal    = htfSwingHigh;
+            newArea.roofPeriod      = PERIOD_M15;
+            newArea.roofStrength    = 0;
+            newArea.roofScore       = 0;
+            newArea.roofDNA         = "----";
          }
          else
          {
             // ATR Projection upwards
-            newArea.hasOrganicRoof = false;
-            newArea.roofSource     = BOUNDARY_ATR_PROJECTED;
-            newArea.roofBaseStart  = 0;
-            newArea.roofBoundary   = NormalizeDouble(midPrice + (1.0 * dailyATR), _Digits);
-            newArea.roofDistal     = newArea.roofBoundary;
+            newArea.hasOrganicRoof  = false;
+            newArea.roofSource      = BOUNDARY_ATR_PROJECTED;
+            newArea.roofBaseStart   = 0;
+            newArea.roofLegOutTime  = TimeCurrent();
+            newArea.roofBoundary    = NormalizeDouble(midPrice + (1.0 * dailyATR), _Digits);
+            newArea.roofDistal      = newArea.roofBoundary;
             newArea.roofProximal   = newArea.roofBoundary;
             newArea.roofPeriod     = PERIOD_D1;
             newArea.roofStrength   = 0;
@@ -550,16 +560,19 @@ private:
 
    //+------------------------------------------------------------------+
    //| Update Exhaustion State Machine using One-Way Ratchet            |
+   //| Only evaluates price ticks if current time > LegOut candle time  |
    //+------------------------------------------------------------------+
    void UpdateExhaustionRatchet(const double bid, const double ask)
    {
       if(!m_activeArea.isValid) return;
 
+      datetime now = TimeCurrent();
       double buySubRange  = m_activeArea.buyZoneEnd - m_activeArea.buyZoneStart;
       double sellSubRange = m_activeArea.sellZoneEnd - m_activeArea.sellZoneStart;
 
       // 1. Buy Area Exhaustion (Tested by Bid low downwards)
-      if(buySubRange > 0.0)
+      // Only monitor if current time is strictly after the Floor zone's Leg-Out bar
+      if(buySubRange > 0.0 && now > m_activeArea.floorLegOutTime)
       {
          if(bid <= m_activeArea.buyZoneEnd)
          {
@@ -590,7 +603,8 @@ private:
       }
 
       // 2. Sell Area Exhaustion (Tested by Ask high upwards)
-      if(sellSubRange > 0.0)
+      // Only monitor if current time is strictly after the Roof zone's Leg-Out bar
+      if(sellSubRange > 0.0 && now > m_activeArea.roofLegOutTime)
       {
          if(ask >= m_activeArea.sellZoneStart)
          {

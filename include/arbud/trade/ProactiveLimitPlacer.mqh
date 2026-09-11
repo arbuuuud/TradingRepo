@@ -25,13 +25,15 @@ private:
    double               m_fixedLotSize;      // Lot size per grid position (e.g. 0.01)
    string               m_symbol;
    ulong                m_orderDeviation;
+   datetime             m_lastSyncTime;      // Debounce timer: prevents multiple requests per second
 
 public:
    CProactiveLimitPlacer() : m_magicNumber(888222),
                              m_maxPosPerSide(5),
                              m_fixedLotSize(0.01),
                              m_symbol(""),
-                             m_orderDeviation(10)
+                             m_orderDeviation(10),
+                             m_lastSyncTime(0)
    {
    }
 
@@ -103,6 +105,11 @@ public:
                          const double currentAsk)
    {
       if(!area.isValid) return;
+
+      // Anti-Spam Debounce: Only evaluate order placement once every 2 seconds
+      datetime now = TimeCurrent();
+      if((now - m_lastSyncTime) < 2) return;
+      m_lastSyncTime = now;
 
       // 1. Check Equilibrium Clean-up:
       // If price has reached Hard TP 50% from below (for Buy) or from above (for Sell)
