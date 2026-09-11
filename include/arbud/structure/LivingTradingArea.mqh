@@ -195,29 +195,34 @@ public:
 
    //+------------------------------------------------------------------+
    //| Core Engine: Synchronize & Update Living Trading Area            |
-   //| Called on every tick or new candle                               |
+   //| isNewCandle = true: allows structural rebuild & zone migration   |
+   //| isNewCandle = false: strictly updates live exhaustion ratchet     |
    //+------------------------------------------------------------------+
    bool UpdateTradingArea(const string symbol,
                           CRBRDBDV1 &rbrdbdEngine,
                           const double currentBid,
-                          const double currentAsk)
+                          const double currentAsk,
+                          const bool isNewCandle = false)
    {
       double midPrice = (currentBid + currentAsk) * 0.5;
       if(midPrice <= 0.0) return false;
 
-      // 1. Check if structure shifted or upgraded:
-      // Rebuild if:
-      // - Price breaks outside current corridor, OR
-      // - Active area reached Hard SL or 100% full exhaustion, OR
-      // - A NEWER / CLOSER valid RBR formed (floor base shifted), OR
-      // - A NEWER / CLOSER valid DBD formed (roof base shifted), OR
-      // - Area was on Fallback (Cond 2 or 3) and now a counter-zone formed (upgrade to Cond 1).
-      bool structureShifted = false;
-      if(m_activeArea.isValid)
+      // 1. Structural rebuild or migration is evaluated:
+      // - Whenever there is no valid active area yet, OR
+      // - The active area was completely breached (price beyond Hard SL or 100% exhausted), OR
+      // - On closed candle (isNewCandle == true) when a newer/closer valid RBR/DBD has formed.
+      bool needRebuild = false;
+
+      if(!m_activeArea.isValid || IsAreaBreached(midPrice))
       {
+         needRebuild = true;
+      }
+      else if(isNewCandle)
+      {
+         // Price broke outside the current Floor/Roof boundary
          if(midPrice < m_activeArea.floorBoundary || midPrice > m_activeArea.roofBoundary)
          {
-            structureShifted = true;
+            needRebuild = true;
          }
          else
          {
@@ -226,28 +231,28 @@ public:
             bool hasOrganicFloor = rbrdbdEngine.FindNearestFloor(m_baseTF, midPrice, curFloor);
             bool hasOrganicRoof  = rbrdbdEngine.FindNearestRoof(m_baseTF, midPrice, curRoof);
 
-            // Check if there is a new / closer valid Floor (RBR above previous floor)
+            // Check if a newer / closer valid Floor has formed
             if(hasOrganicFloor)
             {
                if(!m_activeArea.hasOrganicFloor || curFloor.baseStart != m_activeArea.floorBaseStart)
                {
-                  structureShifted = true;
+                  needRebuild = true;
                }
             }
 
-            // Check if there is a new / closer valid Roof (DBD below previous roof)
-            if(!structureShifted && hasOrganicRoof)
+            // Check if a newer / closer valid Roof has formed
+            if(!needRebuild && hasOrganicRoof)
             {
                if(!m_activeArea.hasOrganicRoof || curRoof.baseStart != m_activeArea.roofBaseStart)
                {
-                  structureShifted = true;
+                  needRebuild = true;
                }
             }
          }
       }
 
-      // 2. If no active area, breached/invalidated, OR closer structure formed -> Rebuild
-      if(!m_activeArea.isValid || IsAreaBreached(midPrice) || structureShifted)
+      // 2. Rebuild only if required
+      if(needRebuild)
       {
          bool rebuilt = BuildNewTradingArea(symbol, rbrdbdEngine, midPrice);
          if(!rebuilt)

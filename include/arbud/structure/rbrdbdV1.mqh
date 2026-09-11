@@ -605,7 +605,8 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Find Nearest Valid Floor (RBR) strictly below target price       |
+   //| Find Nearest Valid Floor (RBR) whose final boundary is below price|
+   //| Rule: Price must not have breached final boundary (distal-buffer)|
    //| Rule: Ignore any zone with Strength 0 (Weak/Unqualified)         |
    //+------------------------------------------------------------------+
    bool FindNearestFloor(const ENUM_TIMEFRAMES tf, const double price, SRBRDBDArea &outFloor)
@@ -625,11 +626,14 @@ public:
          // IGNORE STRENGTH 0: Minimum Strength 1 (2 stars) required to qualify as Floor
          if(m_tfList[idx].areas[i].strengthLevel < 1) continue;
 
-         // Must be strictly below current price
-         double topPrice = m_tfList[idx].areas[i].proximal;
-         if(topPrice < price)
+         // Boundary check: Floor must be below current price (not fully breached downwards)
+         double floorBoundary = m_tfList[idx].areas[i].finalBoundary;
+         if(floorBoundary <= 0.0) floorBoundary = m_tfList[idx].areas[i].distal;
+
+         if(floorBoundary < price)
          {
-            double dist = price - topPrice;
+            double topPrice = m_tfList[idx].areas[i].proximal;
+            double dist = MathAbs(price - topPrice);
             if(dist < closestDist)
             {
                closestDist = dist;
@@ -642,7 +646,8 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Find Nearest Valid Roof (DBD) strictly above target price        |
+   //| Find Nearest Valid Roof (DBD) whose final boundary is above price |
+   //| Rule: Price must not have breached final boundary (distal+buffer)|
    //| Rule: Ignore any zone with Strength 0 (Weak/Unqualified)         |
    //+------------------------------------------------------------------+
    bool FindNearestRoof(const ENUM_TIMEFRAMES tf, const double price, SRBRDBDArea &outRoof)
@@ -662,11 +667,14 @@ public:
          // IGNORE STRENGTH 0: Minimum Strength 1 (2 stars) required to qualify as Roof
          if(m_tfList[idx].areas[i].strengthLevel < 1) continue;
 
-         // Must be strictly below current price
-         double botPrice = m_tfList[idx].areas[i].proximal;
-         if(botPrice > price)
+         // Boundary check: Roof must be above current price (not fully breached upwards)
+         double roofBoundary = m_tfList[idx].areas[i].finalBoundary;
+         if(roofBoundary <= 0.0) roofBoundary = m_tfList[idx].areas[i].distal;
+
+         if(roofBoundary > price)
          {
-            double dist = botPrice - price;
+            double botPrice = m_tfList[idx].areas[i].proximal;
+            double dist = MathAbs(price - botPrice);
             if(dist < closestDist)
             {
                closestDist = dist;

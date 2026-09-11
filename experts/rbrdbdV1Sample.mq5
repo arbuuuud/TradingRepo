@@ -131,7 +131,8 @@ void OnTick()
    datetime currentM1Bar = iTime(_Symbol, PERIOD_M1, 0);
 
    // 1. Event-driven update on completed candle close
-   if(currentM1Bar != lastM1Bar)
+   bool isNewM1Bar = (currentM1Bar != lastM1Bar);
+   if(isNewM1Bar)
    {
       lastM1Bar = currentM1Bar;
       ExtRBRDBD.UpdateOnCandleClose(_Symbol);
@@ -145,6 +146,14 @@ void OnTick()
          {
             PrintFormat("[rbrdbdV1Sample] Garbage Collector purged %d old/mitigated zones.", purged);
          }
+      }
+
+      // Update TradingArea geometry strictly on candle close
+      if(InpEnablePhase4)
+      {
+         double curBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double curAsk = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         ExtTradingArea.UpdateTradingArea(_Symbol, ExtRBRDBD, curBid, curAsk, true);
       }
 
       // 4. Proactive Limit Order Placement & Management (Phase 5)
@@ -162,10 +171,10 @@ void OnTick()
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    ExtRBRDBD.UpdateConsumptionOnTick(_Symbol, bid, ask);
 
-   // 3. Update Living TradingArea & Exhaustion State Machine (Phase 4)
+   // 3. Update Living TradingArea & Exhaustion State Machine (Live Tick: Ratchet only)
    if(InpEnablePhase4)
    {
-      ExtTradingArea.UpdateTradingArea(_Symbol, ExtRBRDBD, bid, ask);
+      ExtTradingArea.UpdateTradingArea(_Symbol, ExtRBRDBD, bid, ask, false);
    }
 
    // 5. Update Chart HUD Info
