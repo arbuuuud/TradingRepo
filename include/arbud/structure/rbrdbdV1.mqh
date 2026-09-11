@@ -233,6 +233,7 @@ private:
 
    // Phase 3 Modular Switch
    bool                 m_enablePhase3;   // Dynamic Buffer Calculation (10-Candle Swing vs 2x Base)
+   bool                 m_hideRectangles; // Hide RBR/DBD zone rectangles (labels remain visible)
 
 public:
    CRBRDBDV1() : m_totalTFs(0), m_objPrefix("RBRDBD_"),
@@ -240,7 +241,8 @@ public:
                  m_enablePhase2_3(true), m_enablePhase2_4A(true),
                  m_enablePhase2_4B(true),
                  m_minFVGGapPoints(50.0),
-                 m_enablePhase3(true)
+                 m_enablePhase3(true),
+                 m_hideRectangles(true)
    {
       ArrayResize(m_tfList, 0);
    }
@@ -268,6 +270,12 @@ public:
       m_enablePhase3 = enablePhase3;
    }
 
+   void SetHideRectangles(const bool hide)
+   {
+      m_hideRectangles = hide;
+   }
+
+   bool GetHideRectangles()   const { return m_hideRectangles; }
    bool GetPhase2_1Enabled()  const { return m_enablePhase2_1; }
    bool GetPhase2_2Enabled()  const { return m_enablePhase2_2; }
    bool GetPhase2_3Enabled()  const { return m_enablePhase2_3; }
@@ -1931,21 +1939,29 @@ private:
             rectEndTime = area.invalidTime;
          }
 
-         // Draw / Update Rectangle
-         if(ObjectFind(0, rectName) < 0)
+         // Draw / Update Rectangle (or delete if hideRectangles is active)
+         if(m_hideRectangles)
          {
-            ObjectCreate(0, rectName, OBJ_RECTANGLE, 0, area.baseStart, topPrice, rectEndTime, botPrice);
+            if(ObjectFind(0, rectName) >= 0)
+               ObjectDelete(0, rectName);
          }
          else
          {
-            ObjectMove(0, rectName, 0, area.baseStart, topPrice);
-            ObjectMove(0, rectName, 1, rectEndTime, botPrice);
+            if(ObjectFind(0, rectName) < 0)
+            {
+               ObjectCreate(0, rectName, OBJ_RECTANGLE, 0, area.baseStart, topPrice, rectEndTime, botPrice);
+            }
+            else
+            {
+               ObjectMove(0, rectName, 0, area.baseStart, topPrice);
+               ObjectMove(0, rectName, 1, rectEndTime, botPrice);
+            }
+            ObjectSetInteger(0, rectName, OBJPROP_COLOR, clr);
+            ObjectSetInteger(0, rectName, OBJPROP_FILL, true);
+            ObjectSetInteger(0, rectName, OBJPROP_BACK, true); // Put rectangle in background so candlesticks and text stay on top
+            ObjectSetInteger(0, rectName, OBJPROP_SELECTABLE, false);
+            ObjectSetInteger(0, rectName, OBJPROP_STYLE, area.isInvalid ? STYLE_DOT : STYLE_SOLID);
          }
-         ObjectSetInteger(0, rectName, OBJPROP_COLOR, clr);
-         ObjectSetInteger(0, rectName, OBJPROP_FILL, true);
-         ObjectSetInteger(0, rectName, OBJPROP_BACK, true); // Put rectangle in background so candlesticks and text stay on top
-         ObjectSetInteger(0, rectName, OBJPROP_SELECTABLE, false);
-         ObjectSetInteger(0, rectName, OBJPROP_STYLE, area.isInvalid ? STYLE_DOT : STYLE_SOLID);
 
          // Format status text concisely
          string typeStr = (area.type == RBRDBD_RBR) ? "RBR" : "DBD";

@@ -38,6 +38,7 @@ input bool              InpEnablePhase3      = true;              // Enable Phas
 input group "=== Phase 4 Living TradingArea & Exhaustion ==="
 input bool              InpEnablePhase4      = true;              // Enable Phase 4 Living TradingArea Corridor
 input bool              InpDrawTradingArea   = true;              // Draw TradingArea (Buy/Sell Boxes, TP50, Hard SL)
+input bool              InpHideZoneRectangles= true;              // Hide RBR/DBD Rectangles (Show Labels & TradingArea only)
 
 input group "=== Phase 5 Proactive Limit Order Placer ==="
 input bool              InpEnablePhase5      = true;              // Enable Phase 5 Proactive Limit Grid
@@ -73,6 +74,7 @@ int OnInit()
    // 0. Configure Phase 2 & 3 Modular Test Switches
    ExtRBRDBD.SetPhase2Switches(InpEnablePhase2_1, InpEnablePhase2_2, InpEnablePhase2_3, InpEnablePhase2_4A, InpEnablePhase2_4B, InpMinFVGGapPoints);
    ExtRBRDBD.SetPhase3Switch(InpEnablePhase3);
+   ExtRBRDBD.SetHideRectangles(InpHideZoneRectangles);
 
    // 1. Register Timeframes: M1 (Main Visible) + M15 & H1 (HTF Parent Reference)
    ExtRBRDBD.RegisterTimeframe(PERIOD_M1, 
