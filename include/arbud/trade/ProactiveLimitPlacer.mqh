@@ -25,8 +25,9 @@ private:
    double               m_fixedLotSize;      // Lot size per grid position (e.g. 0.01)
    string               m_symbol;
    ulong                m_orderDeviation;
-   datetime             m_lastSyncTime;      // Debounce timer: prevents multiple requests per second
-   int                  m_lastTrackedAreaId; // Tracks active area ID to detect area changes
+   datetime             m_lastSyncTime;              // Debounce timer: prevents multiple requests per second
+   datetime             m_lastTrackedFloorBaseStart; // Tracks active Floor zone origin time
+   datetime             m_lastTrackedRoofBaseStart;  // Tracks active Roof zone origin time
 
 public:
    CProactiveLimitPlacer() : m_magicNumber(888222),
@@ -35,7 +36,8 @@ public:
                              m_symbol(""),
                              m_orderDeviation(10),
                              m_lastSyncTime(0),
-                             m_lastTrackedAreaId(0)
+                             m_lastTrackedFloorBaseStart(0),
+                             m_lastTrackedRoofBaseStart(0)
    {
    }
 
@@ -108,11 +110,18 @@ public:
    {
       if(!area.isValid) return;
 
-      // Check if TradingArea has changed (different areaId or corridor migrated)
-      bool areaChanged = (m_lastTrackedAreaId != area.areaId);
-      if(areaChanged)
+      // Check if Floor or Roof zone physically migrated to a NEW distinct base
+      // (Ignoring re-evaluations or FVG upgrades of the same active zone)
+      bool floorMoved = (area.hasOrganicFloor && area.floorBaseStart != m_lastTrackedFloorBaseStart);
+      bool roofMoved  = (area.hasOrganicRoof  && area.roofBaseStart  != m_lastTrackedRoofBaseStart);
+
+      if(m_lastTrackedFloorBaseStart == 0) m_lastTrackedFloorBaseStart = area.floorBaseStart;
+      if(m_lastTrackedRoofBaseStart  == 0) m_lastTrackedRoofBaseStart  = area.roofBaseStart;
+
+      if(floorMoved || roofMoved)
       {
-         m_lastTrackedAreaId = area.areaId;
+         m_lastTrackedFloorBaseStart = area.floorBaseStart;
+         m_lastTrackedRoofBaseStart  = area.roofBaseStart;
          // Synchronize / adjust SL & TP for all existing open positions and pending orders
          SyncAreaTransitionRisk(area, currentBid, currentAsk);
       }
