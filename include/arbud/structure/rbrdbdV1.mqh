@@ -77,9 +77,15 @@ struct SRBRDBDArea
    double            htfSwingLevel;    // Price level of the reacted HTF swing
    datetime          htfSwingTime;     // Timestamp of the HTF swing bar
    double            htfSwingDistPoints;// Distance in points from base to swing level
-   int               scorePhase2_4B;   // +1 Point if passHTFSwing is true, 0 otherwise
+   int               scorePhase2_4B;   // Sub-score for 2.4B
 
-   int               totalScore;       // Phase 2 total score accumulator (0 to 4)
+   // Phase 2.4 Combined HTF POI Reaction (Parent Zone OR Structural Swing)
+   bool              passHTFPOI;       // True if passHTFZone OR passHTFSwing is true
+   int               scorePhase2_4;    // +1 Point if passHTFPOI is true, 0 otherwise
+
+   int               totalScore;       // Phase 2 total score accumulator (0 to 4 stars)
+   int               strengthLevel;    // 0: Weak (0-1★), 1: Moderate (2★), 2: High-Prob A+ (3-4★)
+   string            dnaCode;          // DNA string: e.g. "TBFH", "-BFH", "T-F-", "----"
 
    void Init()
    {
@@ -133,7 +139,12 @@ struct SRBRDBDArea
       htfSwingDistPoints= 0.0;
       scorePhase2_4B    = 0;
 
+      passHTFPOI        = false;
+      scorePhase2_4     = 0;
+
       totalScore        = 0;
+      strengthLevel     = 0;
+      dnaCode           = "----";
    }
 };
 
@@ -352,12 +363,8 @@ public:
             EvaluatePhase2_3_AttachedFVG(symbol, data.areas[a]);
             if(data.areas[a].passDirectFVG)
             {
-               // Recalculate total score dynamically
-               data.areas[a].totalScore = data.areas[a].scorePhase2_1 +
-                                          data.areas[a].scorePhase2_2 +
-                                          data.areas[a].scorePhase2_3 +
-                                          data.areas[a].scorePhase2_4A +
-                                          data.areas[a].scorePhase2_4B;
+               // Recalculate 4-Star Score, DNA, and Strength dynamically
+               FinalizePhase2Scoring(data.areas[a]);
             }
          }
       }
@@ -884,15 +891,45 @@ private:
          data.areas[size].scorePhase2_4B = 0;
       }
 
-      // Phase 2 Total Score Accumulator (Sums active modules)
-      data.areas[size].totalScore = data.areas[size].scorePhase2_1 +
-                                    data.areas[size].scorePhase2_2 +
-                                    data.areas[size].scorePhase2_3 +
-                                    data.areas[size].scorePhase2_4A +
-                                    data.areas[size].scorePhase2_4B;
+      // Finalize 4-Star Score, DNA, and Strength Level
+      FinalizePhase2Scoring(data.areas[size]);
 
       string lbl = (type == RBRDBD_RBR) ? "RBR" : "DBD";
       data.areas[size].objName = m_objPrefix + EnumToString(finalPeriod) + "_" + lbl + "_" + TimeToString(bStart, TIME_DATE|TIME_MINUTES);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Compute Combined 4-Star Score, DNA string, and Strength Level   |
+   //+------------------------------------------------------------------+
+   void FinalizePhase2Scoring(SRBRDBDArea &area)
+   {
+      // Pillar 4: HTF POI Reaction (Combines Parent Zone 2.4A OR Structural Swing 2.4B)
+      area.passHTFPOI    = (area.passHTFZone || area.passHTFSwing);
+      area.scorePhase2_4 = area.passHTFPOI ? 1 : 0;
+
+      // Calculate Total Stars (0 to 4 Stars)
+      area.totalScore = area.scorePhase2_1 +
+                        area.scorePhase2_2 +
+                        area.scorePhase2_3 +
+                        area.scorePhase2_4;
+
+      // Construct DNA Code (e.g. "TBFH", "-BFH", "T-F-", "----")
+      string cT = (area.scorePhase2_1 > 0) ? "T" : "-";
+      string cB = (area.scorePhase2_2 > 0) ? "B" : "-";
+      string cF = (area.scorePhase2_3 > 0) ? "F" : "-";
+      string cH = (area.scorePhase2_4 > 0) ? "H" : "-";
+      area.dnaCode = cT + cB + cF + cH;
+
+      // Map to Official Strength Level:
+      // Strength 0 (Weak): 0 - 1 Star
+      // Strength 1 (Moderate): 2 Stars
+      // Strength 2 (High-Prob A+): 3 - 4 Stars
+      if(area.totalScore >= 3)
+         area.strengthLevel = 2;
+      else if(area.totalScore == 2)
+         area.strengthLevel = 1;
+      else
+         area.strengthLevel = 0;
    }
 
    //+------------------------------------------------------------------+
@@ -1744,25 +1781,8 @@ private:
          }
          else
          {
-            // Combined Phase 2 Mode
-            string qInfo = "";
-            if(area.scorePhase2_1 > 0)
-               qInfo += "T:" + GetTFShortName(area.reflTF) + " ";
-            if(area.scorePhase2_2 > 0)
-               qInfo += "BOS ";
-            if(area.scorePhase2_3 > 0)
-               qInfo += "FVG ";
-            if(area.scorePhase2_4A > 0)
-               qInfo += "H:" + GetTFShortName(area.htfZoneTF) + " ";
-            if(area.scorePhase2_4B > 0)
-               qInfo += "S:" + GetTFShortName(area.htfSwingTF) + " ";
-
-            if(StringLen(qInfo) > 0)
-               StringTrimRight(qInfo);
-            else
-               qInfo = "raw";
-
-            scoreStr = StringFormat("%s|%d★", qInfo, area.totalScore);
+            // Combined Phase 2 Mode: Clean DNA and Official Strength Display
+            scoreStr = StringFormat("%s %d★|Str%d", area.dnaCode, area.totalScore, area.strengthLevel);
          }
 
          // Retest/Status info

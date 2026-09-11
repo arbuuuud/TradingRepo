@@ -126,7 +126,8 @@ void OnTick()
    if(ExtRBRDBD.GetAreas(PERIOD_M1, areas))
    {
       int total = ArraySize(areas);
-      int active = 0, escalated = 0, p21Passed = 0, bosPassed = 0, fvgPassed = 0, htfZonePassed = 0, htfSwingPassed = 0, highQuality = 0;
+      int active = 0, escalated = 0, p21Passed = 0, bosPassed = 0, fvgPassed = 0, htfZonePassed = 0, htfSwingPassed = 0, htfPOIPassed = 0;
+      int countStr0 = 0, countStr1 = 0, countStr2 = 0;
       for(int i = 0; i < total; i++)
       {
          if(!areas[i].isInvalid) active++;
@@ -136,7 +137,11 @@ void OnTick()
          if(areas[i].scorePhase2_3 > 0) fvgPassed++;
          if(areas[i].scorePhase2_4A > 0) htfZonePassed++;
          if(areas[i].scorePhase2_4B > 0) htfSwingPassed++;
-         if(areas[i].totalScore >= 2) highQuality++;
+         if(areas[i].passHTFPOI)        htfPOIPassed++;
+
+         if(areas[i].strengthLevel == 2) countStr2++;
+         else if(areas[i].strengthLevel == 1) countStr1++;
+         else countStr0++;
       }
 
       string modeHeader;
@@ -151,7 +156,7 @@ void OnTick()
       else if(InpEnablePhase2_1 && !InpEnablePhase2_2 && !InpEnablePhase2_3 && !InpEnablePhase2_4A && !InpEnablePhase2_4B)
          modeHeader = "=== RBR/DBD ENGINE (PHASE 2.1 ISOLATED: TIGHTNESS ONLY) ===";
       else
-         modeHeader = "=== RBR/DBD ENGINE (PHASE 2 COMBINED: 4-STAR SCORING) ===";
+         modeHeader = "=== RBR/DBD ENGINE (PHASE 2 COMBINED: 4-STAR & DNA TBFH MODE) ===";
 
       string qualityBreakdown;
       if(InpEnablePhase2_4B && !InpEnablePhase2_1 && !InpEnablePhase2_2 && !InpEnablePhase2_3 && !InpEnablePhase2_4A)
@@ -166,8 +171,9 @@ void OnTick()
       else if(!InpEnablePhase2_1 && InpEnablePhase2_2 && !InpEnablePhase2_3 && !InpEnablePhase2_4A && !InpEnablePhase2_4B)
          qualityBreakdown = StringFormat("BOS Pass Rate: %d / %d Zones (%.1f%%)", bosPassed, total, total > 0 ? (bosPassed * 100.0 / total) : 0.0);
       else
-         qualityBreakdown = StringFormat("P2.1:%d | P2.2:%d | P2.3:%d | P2.4A:%d | P2.4B:%d | Multi-Star(>=2★):%d/%d", 
-                                         p21Passed, bosPassed, fvgPassed, htfZonePassed, htfSwingPassed, highQuality, total);
+         qualityBreakdown = StringFormat("Pillars: [T]:%d | [B]:%d | [F]:%d | [H]:%d\n" +
+                                         "Strength: Str0(Weak):%d | Str1(Mod):%d | Str2(A+):%d (Total:%d)", 
+                                         p21Passed, bosPassed, fvgPassed, htfPOIPassed, countStr0, countStr1, countStr2, total);
 
       Comment(StringFormat("%s\n" +
                            "Total Zones: %d | Active: %d | Escalated (M3/M5): %d\n" +
