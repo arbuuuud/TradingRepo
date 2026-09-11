@@ -106,20 +106,56 @@ public:
    {
       if(!area.isValid) return;
 
-      // Anti-Spam Debounce: Only evaluate order placement once every 2 seconds
-      datetime now = TimeCurrent();
-      if((now - m_lastSyncTime) < 2) return;
-      m_lastSyncTime = now;
+      // 1. Purge any pending orders that are OUTSIDE the active TradingArea bounds
+      PurgeStaleOrders(area);
 
-      // 1. Check Equilibrium Clean-up:
+      // 2. Check Equilibrium Clean-up:
       // If price has reached Hard TP 50% from below (for Buy) or from above (for Sell)
       CheckEquilibriumCleanUp(area, currentBid, currentAsk);
 
-      // 2. Synchronize Buy Limit Grid on Floor Side
+      // 3. Synchronize Buy Limit Grid on Floor Side
       SyncBuyLimitGrid(area, currentAsk);
 
-      // 3. Synchronize Sell Limit Grid on Roof Side
+      // 4. Synchronize Sell Limit Grid on Roof Side
       SyncSellLimitGrid(area, currentBid);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Purge Stale Orders: Cancel any orders outside current active area|
+   //+------------------------------------------------------------------+
+   void PurgeStaleOrders(const SLivingTradingArea &area)
+   {
+      for(int i = OrdersTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = OrderGetTicket(i);
+         if(ticket <= 0) continue;
+
+         if(OrderGetString(ORDER_SYMBOL) == m_symbol &&
+            OrderGetInteger(ORDER_MAGIC) == (long)m_magicNumber)
+         {
+            ENUM_ORDER_TYPE oType = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+            double oPrice = OrderGetDouble(ORDER_PRICE_OPEN);
+
+            if(oType == ORDER_TYPE_BUY_LIMIT)
+            {
+               // If Floor is invalid/synthetic, or order price is outside [buyZoneStart, buyZoneEnd]
+               if(!area.hasOrganicFloor || area.floorStrength < 1 ||
+                  oPrice < (area.buyZoneStart - (5.0 * _Point)) || oPrice > (area.buyZoneEnd + (5.0 * _Point)))
+               {
+                  m_trade.OrderDelete(ticket);
+               }
+            }
+            else if(oType == ORDER_TYPE_SELL_LIMIT)
+            {
+               // If Roof is invalid/synthetic, or order price is outside [sellZoneStart, sellZoneEnd]
+               if(!area.hasOrganicRoof || area.roofStrength < 1 ||
+                  oPrice < (area.sellZoneStart - (5.0 * _Point)) || oPrice > (area.sellZoneEnd + (5.0 * _Point)))
+               {
+                  m_trade.OrderDelete(ticket);
+               }
+            }
+         }
+      }
    }
 
    //+------------------------------------------------------------------+
@@ -146,54 +182,76 @@ public:
       }
 
       // 3. Determine Pristine / Virgin Depth Bounds:
-      // Upper bound of virgin space: deepest penetrated price if touched, else buyZoneEnd
+      // In Buy area: Virgin space is from topFresh down to botFresh.
+      // topFresh is buyMaxPenetratedPrice if already entered, else buyZoneEnd (top edge)
       double topFresh = area.buyZoneEnd;
       if(area.buyMaxPenetratedPrice > 0.0 && area.buyMaxPenetratedPrice < topFresh)
       {
          topFresh = area.buyMaxPenetratedPrice;
       }
 
-      // Lower bound of virgin space: Final Floor boundary
-      double botFresh = area.buyZoneStart;
+      double botFresh = area.buyZoneStart; // Bottom edge (Final Floor)
       double freshSpan = topFresh - botFresh;
 
-      // Minimum space required to place orders safely (e.g. at least 15 points)
+      // Minimum space required to place orders safely
       if(freshSpan < (15.0 * _Point))
       {
          CancelPendingOrdersByType(ORDER_TYPE_BUY_LIMIT);
          return;
       }
 
-      // 4. Cancel any Buy Limit orders whose price is already touched (>= topFresh)
+      // 4. Cancel any Buy Limit orders whose price has already been touched (>= topFresh)
       CancelBreachedBuyLimits(topFresh);
 
-      // 5. Count currently active Buy positions and Buy Limit orders for this area
-      int openBuyPositions = CountOpenPositionsByType(POSITION_TYPE_BUY);
-      int activeBuyLimits  = CountPendingOrdersByType(ORDER_TYPE_BUY_LIMIT);
-      int totalBuySlots    = openBuyPositions + activeBuyLimits;
+      // 5. Generate Target Grid Prices across Virgin Space:
+      // Rule: Exactly 1 order at the topmost virgin edge, 1 order at the bottommost edge,
+      // and remaining orders distributed evenly in between!
+      double targetPrices[];
+      ArrayResize(targetPrices, targetCapacity);
 
-      // If already at or above target capacity, do not place more
-      if(totalBuySlots >= targetCapacity) return;
+      double margin = MathMax(freshSpan * 0.02, 5.0 * _Point);
+      double pTop = topFresh - margin;
+      double pBot = botFresh + margin;
 
-      int neededLimits = targetCapacity - totalBuySlots;
-      if(neededLimits <= 0) return;
+      if(targetCapacity == 1)
+      {
+         targetPrices[0] = NormalizeDouble((pTop + pBot) * 0.5, _Digits);
+      }
+      else
+      {
+         targetPrices[0]                  = NormalizeDouble(pTop, _Digits); // 1 at topmost virgin edge
+         targetPrices[targetCapacity - 1] = NormalizeDouble(pBot, _Digits); // 1 at bottommost virgin edge
 
-      // 6. Distribute Limit Orders evenly inside virgin depth
-      double priceStep = freshSpan / (double)(neededLimits + 1);
+         if(targetCapacity > 2)
+         {
+            double innerSpan = pTop - pBot;
+            double step = innerSpan / (double)(targetCapacity - 1);
+            for(int m = 1; m < targetCapacity - 1; m++)
+            {
+               targetPrices[m] = NormalizeDouble(pTop - (m * step), _Digits);
+            }
+         }
+      }
+
+      // 6. Check existing orders vs target prices:
+      // If an order or position already covers a target price, keep it!
+      // Only place orders for missing virgin slots.
+      double tolerance = MathMax((freshSpan / (double)(targetCapacity + 1)) * 0.40, 5.0 * _Point);
       string comment   = GenerateOrderComment("RBR", area.floorPeriod, area.floorDNA, area.floorStrength, area.buyExhaustionLevel);
 
-      for(int k = 1; k <= neededLimits; k++)
+      for(int i = 0; i < targetCapacity; i++)
       {
-         double orderPrice = NormalizeDouble(topFresh - (k * priceStep), _Digits);
+         double orderPrice = targetPrices[i];
 
-         // Safety Check: must be strictly below current Ask and above botFresh
+         // Safety: order price must be below current Ask
          if(orderPrice >= currentAsk - (10.0 * _Point)) continue;
          if(orderPrice <= botFresh) continue;
 
-         // Check if an order already exists very close to this price (within 5 points)
-         if(IsOrderExistingNearPrice(ORDER_TYPE_BUY_LIMIT, orderPrice, 5.0 * _Point)) continue;
+         // If already covered by existing Buy Limit or Buy Position near this price -> DO NOT REORDER
+         if(IsOrderOrPositionExistingNearPrice(ORDER_TYPE_BUY_LIMIT, orderPrice, tolerance))
+            continue;
 
-         // Execute Order Placement
+         // Place Limit Order in this untouched slot
          m_trade.BuyLimit(m_fixedLotSize, orderPrice, m_symbol, area.floorHardSL, area.hardTP50,
                           ORDER_TIME_GTC, 0, comment);
       }
@@ -223,15 +281,15 @@ public:
       }
 
       // 3. Determine Pristine / Virgin Depth Bounds:
-      // Lower bound of virgin space: deepest penetrated price if touched, else sellZoneStart
+      // In Sell area: Virgin space is from botFresh up to topFresh.
+      // botFresh is sellMaxPenetratedPrice if already entered, else sellZoneStart (bottom edge)
       double botFresh = area.sellZoneStart;
       if(area.sellMaxPenetratedPrice > 0.0 && area.sellMaxPenetratedPrice > botFresh)
       {
          botFresh = area.sellMaxPenetratedPrice;
       }
 
-      // Upper bound of virgin space: Final Roof boundary
-      double topFresh = area.sellZoneEnd;
+      double topFresh = area.sellZoneEnd; // Top edge (Final Roof)
       double freshSpan = topFresh - botFresh;
 
       // Minimum space required to place orders safely
@@ -241,36 +299,58 @@ public:
          return;
       }
 
-      // 4. Cancel any Sell Limit orders whose price is already touched (<= botFresh)
+      // 4. Cancel any Sell Limit orders whose price has already been touched (<= botFresh)
       CancelBreachedSellLimits(botFresh);
 
-      // 5. Count currently active Sell positions and Sell Limit orders for this area
-      int openSellPositions = CountOpenPositionsByType(POSITION_TYPE_SELL);
-      int activeSellLimits  = CountPendingOrdersByType(ORDER_TYPE_SELL_LIMIT);
-      int totalSellSlots    = openSellPositions + activeSellLimits;
+      // 5. Generate Target Grid Prices across Virgin Space:
+      // Rule: Exactly 1 order at bottommost virgin edge, 1 order at topmost virgin edge,
+      // and remaining orders distributed evenly in between!
+      double targetPrices[];
+      ArrayResize(targetPrices, targetCapacity);
 
-      // If already at or above target capacity, do not place more
-      if(totalSellSlots >= targetCapacity) return;
+      double margin = MathMax(freshSpan * 0.02, 5.0 * _Point);
+      double pBot = botFresh + margin;
+      double pTop = topFresh - margin;
 
-      int neededLimits = targetCapacity - totalSellSlots;
-      if(neededLimits <= 0) return;
+      if(targetCapacity == 1)
+      {
+         targetPrices[0] = NormalizeDouble((pTop + pBot) * 0.5, _Digits);
+      }
+      else
+      {
+         targetPrices[0]                  = NormalizeDouble(pBot, _Digits); // 1 at bottommost virgin edge
+         targetPrices[targetCapacity - 1] = NormalizeDouble(pTop, _Digits); // 1 at topmost virgin edge
 
-      // 6. Distribute Limit Orders evenly inside virgin depth
-      double priceStep = freshSpan / (double)(neededLimits + 1);
+         if(targetCapacity > 2)
+         {
+            double innerSpan = pTop - pBot;
+            double step = innerSpan / (double)(targetCapacity - 1);
+            for(int m = 1; m < targetCapacity - 1; m++)
+            {
+               targetPrices[m] = NormalizeDouble(pBot + (m * step), _Digits);
+            }
+         }
+      }
+
+      // 6. Check existing orders vs target prices:
+      // If an order or position already covers a target price, keep it!
+      // Only place orders for missing virgin slots.
+      double tolerance = MathMax((freshSpan / (double)(targetCapacity + 1)) * 0.40, 5.0 * _Point);
       string comment   = GenerateOrderComment("DBD", area.roofPeriod, area.roofDNA, area.roofStrength, area.sellExhaustionLevel);
 
-      for(int k = 1; k <= neededLimits; k++)
+      for(int i = 0; i < targetCapacity; i++)
       {
-         double orderPrice = NormalizeDouble(botFresh + (k * priceStep), _Digits);
+         double orderPrice = targetPrices[i];
 
-         // Safety Check: must be strictly above current Bid and below topFresh
+         // Safety: order price must be above current Bid
          if(orderPrice <= currentBid + (10.0 * _Point)) continue;
          if(orderPrice >= topFresh) continue;
 
-         // Check if an order already exists very close to this price (within 5 points)
-         if(IsOrderExistingNearPrice(ORDER_TYPE_SELL_LIMIT, orderPrice, 5.0 * _Point)) continue;
+         // If already covered by existing Sell Limit or Sell Position near this price -> DO NOT REORDER
+         if(IsOrderOrPositionExistingNearPrice(ORDER_TYPE_SELL_LIMIT, orderPrice, tolerance))
+            continue;
 
-         // Execute Order Placement
+         // Place Limit Order in this untouched slot
          m_trade.SellLimit(m_fixedLotSize, orderPrice, m_symbol, area.roofHardSL, area.hardTP50,
                            ORDER_TIME_GTC, 0, comment);
       }
@@ -427,6 +507,49 @@ public:
          }
       }
       return count;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Helper: Check if an order OR open position exists near price     |
+   //+------------------------------------------------------------------+
+   bool IsOrderOrPositionExistingNearPrice(const ENUM_ORDER_TYPE orderType,
+                                           const double targetPrice,
+                                           const double tolerance) const
+   {
+      // 1. Check pending orders
+      for(int i = OrdersTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = OrderGetTicket(i);
+         if(ticket <= 0) continue;
+
+         if(OrderGetString(ORDER_SYMBOL) == m_symbol &&
+            OrderGetInteger(ORDER_MAGIC) == (long)m_magicNumber &&
+            OrderGetInteger(ORDER_TYPE)  == orderType)
+         {
+            double price = OrderGetDouble(ORDER_PRICE_OPEN);
+            if(MathAbs(price - targetPrice) <= tolerance)
+               return true;
+         }
+      }
+
+      // 2. Check open positions (if already filled at this price level)
+      ENUM_POSITION_TYPE posType = (orderType == ORDER_TYPE_BUY_LIMIT) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
+      for(int p = PositionsTotal() - 1; p >= 0; p--)
+      {
+         ulong ticket = PositionGetTicket(p);
+         if(ticket <= 0) continue;
+
+         if(PositionGetString(POSITION_SYMBOL) == m_symbol &&
+            PositionGetInteger(POSITION_MAGIC) == (long)m_magicNumber &&
+            PositionGetInteger(POSITION_TYPE)  == posType)
+         {
+            double posPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            if(MathAbs(posPrice - targetPrice) <= tolerance)
+               return true;
+         }
+      }
+
+      return false;
    }
 
    //+------------------------------------------------------------------+

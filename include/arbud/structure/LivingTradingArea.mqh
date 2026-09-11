@@ -196,33 +196,16 @@ public:
       double midPrice = (currentBid + currentAsk) * 0.5;
       if(midPrice <= 0.0) return false;
 
-      // 1. Check if a newer/closer RBR or DBD zone has formed
+      // 1. Check if structure shifted:
+      // Keep area stable while price is inside current corridor. Only shift if:
+      // - Price breaks outside current Floor/Roof corridor, OR
+      // - Active area has reached Hard SL or full exhaustion.
       bool structureShifted = false;
       if(m_activeArea.isValid)
       {
-         SRBRDBDArea curNearestFloor, curNearestRoof;
-         curNearestFloor.Init();
-         curNearestRoof.Init();
-
-         bool hasFloor = rbrdbdEngine.FindNearestFloor(m_baseTF, midPrice, curNearestFloor);
-         bool hasRoof  = rbrdbdEngine.FindNearestRoof(m_baseTF, midPrice, curNearestRoof);
-
-         // Check if a closer/newer Floor has formed
-         if(hasFloor)
+         if(midPrice < m_activeArea.floorBoundary || midPrice > m_activeArea.roofBoundary)
          {
-            if(!m_activeArea.hasOrganicFloor || curNearestFloor.baseStart != m_activeArea.floorBaseStart)
-            {
-               structureShifted = true;
-            }
-         }
-
-         // Check if a closer/newer Roof has formed
-         if(!structureShifted && hasRoof)
-         {
-            if(!m_activeArea.hasOrganicRoof || curNearestRoof.baseStart != m_activeArea.roofBaseStart)
-            {
-               structureShifted = true;
-            }
+            structureShifted = true;
          }
       }
 
