@@ -55,7 +55,7 @@ int OnInit()
    // 0. Configure Phase 2 Modular Test Switches
    ExtRBRDBD.SetPhase2Switches(InpEnablePhase2_1, InpEnablePhase2_2, InpEnablePhase2_3, InpEnablePhase2_4A, InpMinFVGGapPoints);
 
-   // 1. Register Main Timeframe: M1
+   // 1. Register Timeframes: M1 (Main Visible) + M15 & H1 (HTF Parent Reference)
    ExtRBRDBD.RegisterTimeframe(PERIOD_M1, 
                                InpMinBaseM1, 
                                InpMaxBaseM1, 
@@ -66,7 +66,11 @@ int OnInit()
                                InpColorUsed, 
                                InpColorMitigated);
 
-   // 2. Scan history bars and evaluate retests
+   // HTF Parent Reference Timeframes (Silent, draw=false)
+   ExtRBRDBD.RegisterTimeframe(PERIOD_M15, 1, 5, 1.0, false);
+   ExtRBRDBD.RegisterTimeframe(PERIOD_H1,  1, 5, 1.0, false);
+
+   // 2. Scan history bars and evaluate retests for all registered timeframes
    ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars);
 
    PrintFormat("[rbrdbdV1Sample] Initialized on %s (PERIOD_M1). Total active zones: %d", 

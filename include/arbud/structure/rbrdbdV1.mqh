@@ -251,12 +251,26 @@ public:
 
    //+------------------------------------------------------------------+
    //| Scan historical bars on initialization                           |
+   //| Scans HTF (H1, M15) first so LTF (M1) can match parent zones     |
    //+------------------------------------------------------------------+
    void InitHistory(const string symbol, const int maxBars = 500)
    {
+      // 1. Scan HTF first (descending timeframe order)
+      for(int i = m_totalTFs - 1; i >= 0; i--)
+      {
+         if(m_tfList[i].tf != PERIOD_M1)
+         {
+            InitTFHistory(symbol, m_tfList[i], maxBars);
+         }
+      }
+
+      // 2. Scan M1 last so it can evaluate against established HTF zones
       for(int i = 0; i < m_totalTFs; i++)
       {
-         InitTFHistory(symbol, m_tfList[i], maxBars);
+         if(m_tfList[i].tf == PERIOD_M1)
+         {
+            InitTFHistory(symbol, m_tfList[i], maxBars);
+         }
       }
    }
 
@@ -1257,10 +1271,6 @@ private:
       area.htfZoneDistal   = 0.0;
       area.scorePhase2_4A  = 0;
 
-      // Ensure HTF data is up to date (M15 and H1)
-      EnsureHTFZoneScanned(symbol, PERIOD_M15);
-      EnsureHTFZoneScanned(symbol, PERIOD_H1);
-
       ENUM_TIMEFRAMES htfLadder[2] = { PERIOD_M15, PERIOD_H1 };
       double tolerance = 30.0 * _Point; // 30 points boundary tolerance for Gold
 
@@ -1314,35 +1324,6 @@ private:
                area.scorePhase2_4A  = 1;
                return; // Priority matched (M15 first, or H1)
             }
-         }
-      }
-   }
-
-   //+------------------------------------------------------------------+
-   //| Ensure HTF Timeframe is registered and history scanned silently  |
-   //+------------------------------------------------------------------+
-   void EnsureHTFZoneScanned(const string symbol, const ENUM_TIMEFRAMES tf)
-   {
-      int idx = FindTFIndex(tf);
-      if(idx < 0)
-      {
-         // Auto-register HTF silently without drawing boxes on chart
-         RegisterTimeframe(tf, 1, 5, 1.0, false);
-         idx = FindTFIndex(tf);
-         if(idx >= 0)
-         {
-            InitTFHistory(symbol, m_tfList[idx], 300);
-         }
-      }
-      else
-      {
-         // If already registered, update closed bars if new bar closed
-         datetime curBar = iTime(symbol, tf, 0);
-         if(curBar != m_tfList[idx].lastBarTime)
-         {
-            m_tfList[idx].lastBarTime = curBar;
-            EvaluateClosedBarConsumption(symbol, m_tfList[idx]);
-            ScanRecentBars(symbol, m_tfList[idx]);
          }
       }
    }
