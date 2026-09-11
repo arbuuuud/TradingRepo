@@ -26,7 +26,12 @@ Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke 
 [ PHASE 1: Pure M1 RBR/DBD Memory & Lifecycle ] 
        │
        ▼
-[ PHASE 2: RBR/DBD Strength Scoring Engine (Strength 0, 1, 2) ]
+[ PHASE 2: RBR/DBD Strength Scoring Sub-Modules (0, 1, 2) ]
+       ├─► Phase 2.1: Base Tightness & MTF Reflection (M5/M15)
+       ├─► Phase 2.2: BOS / ChoCH Wajib Body Close
+       ├─► Phase 2.3: Direct Attached FVG (Magnet Retest)
+       ├─► Phase 2.4: HTF POI Reaction (Anti-No Man's Land)
+       └─► Phase 2.5: Liquidity Sweep & Big Figure ($xx00, $xx50)
        │
        ▼
 [ PHASE 3: Dynamic Buffer Calculation (10-Candle Swing vs 2x Base) ]
@@ -69,40 +74,102 @@ Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke 
 
 ---
 
-### 🔹 PHASE 2: RBR/DBD Strength Scoring Engine (Strength 0, 1, 2)
-*Fokus: Mengklasifikasikan kualitas RBR/DBD ke dalam tingkatan kekuatan (Strength 0, 1, 2) berdasarkan 5 Filter Mutlak SMC Spec.*
+### 🔹 PHASE 2: RBR/DBD Strength Scoring Engine (Tingkat Kekuatan 0, 1, 2)
+*Fokus: Menguji 5 pilar SMC secara modular satu per satu, mengumpulkan poin validasi (0–5), dan memetakan zona ke dalam skor Strength 0, 1, atau 2.*
 
-#### 1. Logika & 5 Pilar Evaluasi Nilai Tambah (Confluence Scoring):
-Setiap RBR/DBD M1 yang baru terbentuk akan dievaluasi terhadap 5 pilar kriteria dari `rbr-dbd-high-probability-generator-spec.md`:
+---
 
-1. **Pilar A - Kepadatan Base & MTF Reflection (Bobot 1 Poin)**:
-   - Base M1 ketat (body rata-rata $\le 60\%$, range base padat $\le 5$ candle).
-   - Base M1 terefleksi sebagai 1–3 candle bersih di M5/M15 (bukan noise liar).
-2. **Pilar B - BOS / ChoCH Wajib Body Close (Bobot 1 Poin)**:
-   - Lilin Leg-Out wajib ditutup (*Close*) melampaui Swing High (untuk RBR) atau Swing Low (untuk DBD) terdekat.
-   - Menolak *wick sweep* semata.
-3. **Pilar C - Direct Attached FVG (Magnet Retest) (Bobot 1 Poin)**:
-   - Lilin Leg-Out meninggalkan FVG signifikan ($\ge 50$ points pada XAUUSD).
-   - Batas luar FVG menempel langsung pada batas luar Base (*proximal boundary*).
-4. **Pilar D - Reaction from HTF POI (Anti-No Man's Land) (Bobot 1 Poin)**:
-   - Titik awal Leg-In bermula dari reaksi pantulan pada zona POI Timeframe Lebih Tinggi (M15 / H1).
-5. **Pilar E - Liquidity Sweep / Big Figure Confluence (Bobot 1 Poin)**:
-   - Base melakukan sweep terhadap Equal Highs / Equal Lows (EQH/EQL) atau level psikologis bulat XAUUSD ($xx00, $xx50) sebelum Leg-Out meledak.
+#### 🔸 Phase 2.1: Base Tightness & MTF Reflection (M5 / M15)
+- **Logika Matematis**:
+  - **M1 Base Tightness**: Untuk setiap candle base ($b_1 \dots b_k$, $1 \le k \le 5$), ukur rasio body:
+    $$\frac{|\text{Close}_i - \text{Open}_i|}{\text{High}_i - \text{Low}_i} \le 0.60 \quad (\text{Wajib Boring Candle})$$
+    Rasio total range base terhadap rata-rata candle height harus ketat (kompresi harga nyata).
+  - **MTF Reflection**: Waktu rentang Base M1 ($\text{baseStart}$ s.d. $\text{baseEnd}$) dikonversikan ke bar M5 / M15. Pada M5 / M15, rentang ini wajib tampak sebagai **1–3 candle konsolidasi bersih** (bukan candle raksasa satu arah).
+- **Poin Tambahan**: +1 Poin jika kedua syarat lolos.
+- **🧪 Harapan / Expected Test Result**:
+  - Zona RBR/DBD M1 dengan base melebar atau memiliki lilin momentum liar di dalamnya langsung tereliminasi dari penerima poin.
+  - Pada chart tampak label info: `[Tightness: PASS | MTF Refl: PASS (+1 pt)]`.
+  - Terbukti secara visual: Ketika chart di-switch ke M5/M15, base M1 tampak sebagai konsolidasi rapat 1–3 candle yang sangat rapi.
 
-#### 2. Klasifikasi Tingkat Kekuatan (Strength Output):
-Total Poin yang terkumpul ($0 - 5$) dipetakan menjadi skor **Strength 0, 1, 2**:
+---
 
-| Nilai Poin | Klasifikasi Strength | Label / Status | Karakteristik & Perlakuan |
-|:---:|:---:|:---:|---|
-| **0 – 1 Poin** | **Strength 0** | `[WEAK / RAW]` | Pola geometris RBR/DBD biasa tanpa konfirmasi SMC kuat. Tidak disarankan untuk entri trading utama, atau kuota order diminimalkan/diabaikan. |
-| **2 – 3 Poin** | **Strength 1** | `[MODERATE]` | Memiliki konfirmasi dasar (misal ada FVG menempel dan Base padat, atau ada BOS Body Close). Layak diperdagangkan dengan alokasi lot standar/terukur. |
-| **4 – 5 Poin** | **Strength 2** | `[HIGH-PROBABILITY / A+]` | **A+ Institutional Setup**: Base padat, ada BOS Body Close, ada FVG menempel langsung, bersumber dari HTF POI, dan/atau melakukan liquidity sweep. Prioritas entri tertinggi dengan probabilitas reaksi maksimal. |
+#### 🔸 Phase 2.2: BOS / ChoCH Wajib Body Close
+- **Logika Matematis**:
+  - Deteksi Swing High dan Swing Low terdekat sebelum Leg-Out menggunakan lookback fractal/swing murni.
+  - **RBR (Bullish Breakout)**:
+    - Harga `rates[legOutIdx].close > SwingHigh_Terdekat` (Wajib **Body Close** melampaui level swing).
+    - Jika `rates[legOutIdx].high > SwingHigh` tapi `rates[legOutIdx].close <= SwingHigh`: Ini terdeteksi sebagai **Wick Sweep**, bukan BOS $\rightarrow$ Ditolak!
+  - **DBD (Bearish Breakdown)**:
+    - Harga `rates[legOutIdx].close < SwingLow_Terdekat` (Wajib **Body Close** melampaui level swing).
+    - Jika hanya ekor low yang menembus swing low lalu close di atasnya $\rightarrow$ Ditolak!
+- **Poin Tambahan**: +1 Poin jika lolos Body Close BOS / ChoCH.
+- **🧪 Harapan / Expected Test Result**:
+  - Pada chart muncul garis horizontal putus-putus berlabel `BOS (Body Close)` atau `ChoCH (Body Close)` yang ditarik dari swing yang ditembus.
+  - Sinyal fakeout di mana harga hanya menjilat swing high/low dengan ekor panjang (*liquidity grab*) tidak lagi mendapatkan poin BOS.
+  - Tereliminasi zona RBR/DBD yang terbentuk di tengah-tengah rentang tanpa mematahkan struktur pasar apapun.
 
-#### 🧪 Harapan / Expected Test Result:
-- Label pada chart menampilkan status kekuatan secara gamblang:  
-  `M1 RBR [Strength 2: A+] (Fresh)` atau `M1 DBD [Strength 1: Moderate] (Fresh)`.
-- Warna border/kotak dapat membedakan tingkat kekuatan (misal: Strength 2 bergaris tebal/warna emas menyala).
-- Logika filtering mampu memilah secara otomatis mana zona noise (Strength 0) vs zona institusional berprobabilitas tinggi (Strength 2).
+---
+
+#### 🔸 Phase 2.3: Direct Attached FVG (Magnet Retest)
+- **Logika Matematis**:
+  - Menguji ada atau tidaknya *Fair Value Gap* (FVG) yang ditinggalkan oleh Leg-Out:
+    - **RBR (Bullish FVG)**: Celah harga antara `High candle sebelum Leg-Out` (atau atap Base) dengan `Low candle setelah Leg-Out` (atau candle berjalan).
+      $$\text{FVG}_{\text{Gap}} = \text{Low}_{\text{Next}} - \text{High}_{\text{Prev}} \ge \text{MinGapPoints} \quad (\text{Default: } \ge 50 \text{ pts / } \$0.50 \text{ XAUUSD})$$
+    - **DBD (Bearish FVG)**: Celah harga antara `High candle setelah Leg-Out` dengan `Low candle sebelum Leg-Out` (atau lantai Base).
+      $$\text{FVG}_{\text{Gap}} = \text{Low}_{\text{Prev}} - \text{High}_{\text{Next}} \ge \text{MinGapPoints}$$
+  - **Syarat Menempel Langsung (*Direct Attached*)**:
+    - Untuk RBR: Batas bawah FVG harus menempel tepat pada garis Proximal (atap Base) dengan toleransi celah $\le 10$ points. FVG yang melayang jauh di atas Base tidak dianggap menempel.
+- **Poin Tambahan**: +1 Poin jika terdapat FVG signifikan yang menempel langsung.
+- **🧪 Harapan / Expected Test Result**:
+  - Kotak semi-transparan tipis (highlight FVG) terlukis menyambung langsung di atas atap Base RBR atau di bawah lantai Base DBD.
+  - Label info menampilkan: `[FVG: Attached (Gap: X pts) (+1 pt)]`.
+  - Terbukti saat retest pertama: Harga turun masuk ke celah FVG dan langsung memantul (*reject*) tepat di batas Base tanpa penetrasi terlalu dalam.
+
+---
+
+#### 🔸 Phase 2.4: HTF POI Reaction (Anti-No Man's Land)
+- **Logika Matematis**:
+  - Menghubungkan titik awal Leg-In dengan zona POI di Timeframe Tinggi (M15 / H1).
+  - **Syarat RBR (Demand)**:
+    - Ekor terendah dari Leg-In wajib bersentuhan atau memantul dari zona Demand / Support / FVG di TF M15 atau H1.
+  - **Syarat DBD (Supply)**:
+    - Ekor tertinggi dari Leg-In wajib bersentuhan atau memantul dari zona Supply / Resistance / FVG di TF M15 atau H1.
+  - Jika Leg-In terbentuk di ruang kosong tanpa referensi HTF POI (*No Man's Land*), tidak berhak mendapat poin.
+- **Poin Tambahan**: +1 Poin jika Leg-In berasal dari reaksi HTF POI.
+- **🧪 Harapan / Expected Test Result**:
+  - Label info menampilkan: `[HTF POI: M15 Demand Reaction (+1 pt)]` atau `[HTF POI: None (0 pt)]`.
+  - Mencegah pola RBR palsu yang terbentuk saat harga sedang terjun bebas di tengah tren bearish HTF.
+  - Seluruh zona M1 yang memiliki poin ini terbukti bergerak searah dengan bias institusional HTF.
+
+---
+
+#### 🔸 Phase 2.5: Liquidity Sweep & Big Figure Confluence ($xx00, $xx50)
+- **Logika Matematis**:
+  - **Level Psikologis Bulat (*Big Figure*)**: Kelipatan `$10.0` (misal 2650.00, 2660.00) dan `$50.0` (2600.00, 2650.00, 2700.00).
+  - **Pemeriksaan Sweep**:
+    - Apakah candle Base pernah menembus level psikologis bulat tersebut atau menembus Equal Highs / Equal Lows (EQH/EQL) di sebelah kirinya dengan ekor wick, lalu kembali ditutup di dalam Base sebelum Leg-Out meledak?
+    - Jika **YA**: Telah terjadi pembersihan likuiditas (*Stop Hunt completed*).
+    - Jika **TIDAK** (Base hanya menempel pasrah tepat di atas/bawah angka bulat): Sangat rawan jebakan stop hunt.
+- **Poin Tambahan**: +1 Poin jika terjadi valid sweep pada level bulat atau EQH/EQL.
+- **🧪 Harapan / Expected Test Result**:
+  - Label info menampilkan: `[Sweep: Confirmed at 2650.00 (+1 pt)]`.
+  - Terhindar dari zona jebakan di angka bulat yang sering kali dihantam tembus oleh pergerakan manipulasi London/NY open.
+  - Respon harga begitu kembali ke zona ini menghasilkan reaksi cepat (*instant bounce*).
+
+---
+
+#### 🔸 Phase 2 Final Aggregator: Pemetaan Skor Strength (0, 1, 2)
+Akumulasi total poin ($0 - 5$) dipetakan menjadi tingkatan kekuatan resmi:
+
+| Total Poin | Skor Strength | Label Visual di Chart | Warna Visual Border / Teks | Perlakuan Eksekusi |
+|:---:|:---:|:---:|:---:|---|
+| **0 – 1 Poin** | **Strength 0** | `M1 RBR/DBD [Str 0: WEAK]` | Abu-abu / Netral | **Diabaikan** untuk grid order, atau hanya sebagai zona referensi pasif. |
+| **2 – 3 Poin** | **Strength 1** | `M1 RBR/DBD [Str 1: MODERATE]` | Biru / Cokelat Muda | **Trading Normal**: Membuka grid limit dengan alokasi lot terukur. |
+| **4 – 5 Poin** | **Strength 2** | `M1 RBR/DBD [Str 2: HIGH-PROB / A+]` | Emas (*Gold*) / Tebal Menyala | **A+ Setup Prioritas**: Alokasi grid penuh dengan tingkat keyakinan maksimal. |
+
+**🧪 Harapan Akhir Phase 2**:
+- Di chart MT5, setiap kotak RBR/DBD memiliki identitas visual instan berdasarkan kekuatannya (Str 0, Str 1, Str 2).
+- Tester dapat melakukan inspeksi visual satu per satu: mengklik atau membaca keterangan poin untuk memverifikasi mengapa zona tersebut mendapat Str 0, 1, atau 2.
 
 ---
 
@@ -164,7 +231,7 @@ Status kelelahan dipantau independen untuk **Buy Area** dan **Sell Area**:
 #### 🧪 Harapan / Expected Test Result:
 - Kotak `TradingArea` terlukis rapi di chart: area Buy (bawah), area Sell (atas), garis tengah Hard TP 50%, dan garis putus-putus Hard SL $\pm 30\%$.
 - Terdapat HUD/Label interaktif di chart yang menampilkan:
-  - `TradingArea #ID | Buy Exhaustion: Level [0-5] (X%) | Sell Exhaustion: Level [0-5] (Y%) | Floor Strength: [0-2] | Roof Strength: [0-2]`.
+  - `TradingArea #ID | Buy Exhaustion: Level [0-5] (X%) | Sell Exhaustion: Level [0-5] (Y%) | Floor Str: [0-2] | Roof Str: [0-2]`.
 - Saat harga bergerak naik/turun mengikis area, angka persentase dan level kelelahan langsung naik secara presisi (*one-way ratchet*: tidak bisa turun kembali ke level 0 jika sudah tertembus).
 
 ---
@@ -175,9 +242,10 @@ Status kelelahan dipantau independen untuk **Buy Area** dan **Sell Area**:
 #### 1. Aturan Alokasi Posisi Berdasarkan Exhaustion Level & Strength:
 Diberikan parameter input `Max_Pos_per_Trading_Area` (misal $= 10$ posisi):
 - **Filter Berdasarkan Strength**:
-  - Jika zona pendukung berstatus **Strength 0**, agen menahan diri atau membatasi pesanan.
-  - Jika zona pendukung berstatus **Strength 1 atau 2**, agen mengaktifkan kuota penuh.
-- **Formula Alokasi Kapasitas**:
+  - Jika zona Floor/Roof pendukung berstatus **Strength 0**, agen menolak menempatkan limit order (*0 position*).
+  - Jika zona berstatus **Strength 1**, agen mengizinkan alokasi order standar.
+  - Jika zona berstatus **Strength 2**, agen mengaktifkan alokasi penuh dengan prioritas utama.
+- **Formula Alokasi Kapasitas Berdasarkan Exhaustion Level**:
   $$\text{AllowedPositions} = \text{Floor}\left(\text{Max\_Pos} \times \text{Factor}(\text{ExhaustionLevel})\right)$$
   - **Level 0 (Fresh)**: Kapasitas $100\%$ $\rightarrow \lfloor 10 \times 1.0 \rfloor = 10$ order.
   - **Level 1 (25% touched)**: Kapasitas tersisa $75\%$ $\rightarrow \lfloor 10 \times 0.75 \rfloor = 7$ order.
@@ -251,7 +319,12 @@ Agen terus memonitor pergerakan candle M1 (dan live tick) saat posisi aktif terb
 | Phase | Komponen Utama | Milestone Deliverables | Target File | Status |
 |---|---|---|---|:---:|
 | **1** | M1 RBR/DBD Memory Pool | Storage dinamis & auto-cleanup zona invalid/mitigated | `rbrdbdV1.mqh` | 🟡 Siap Desain |
-| **2** | RBR/DBD Strength Scoring | Klasifikasi bobot Strength (0, 1, 2) via SMC Criteria | `rbrdbdV1.mqh` | ⚪ Menunggu Ph 1 |
+| **2.1** | Base Tightness & MTF Refl | Bobot +1 poin: Base padat $\le 60\%$ body & 1-3 candle di M5/M15 | `rbrdbdV1.mqh` | ⚪ Menunggu Ph 1 |
+| **2.2** | BOS/ChoCH Body Close | Bobot +1 poin: Wajib close menembus swing, tolak wick sweep | `rbrdbdV1.mqh` | ⚪ Menunggu 2.1 |
+| **2.3** | Direct Attached FVG | Bobot +1 poin: Celah $\ge 50$ pts menempel langsung di batas base | `rbrdbdV1.mqh` | ⚪ Menunggu 2.2 |
+| **2.4** | HTF POI Reaction Gate | Bobot +1 poin: Reaksi dari M15/H1 POI, tolak No Man's Land | `rbrdbdV1.mqh` | ⚪ Menunggu 2.3 |
+| **2.5** | Liquidity Sweep / Big Figure | Bobot +1 poin: Sweep di level bulat ($xx00, $xx50) atau EQH/EQL | `rbrdbdV1.mqh` | ⚪ Menunggu 2.4 |
+| **2 Final** | Strength Aggregator (0, 1, 2) | Klasifikasi final Str 0, 1, 2 + visual warna badge di chart | `rbrdbdV1.mqh` | ⚪ Menunggu 2.5 |
 | **3** | Min-Variance Buffer Engine | Evaluasi $\min(\text{Swing}_{10}, 2\times\text{Base})$ untuk Floor & Roof | `rbrdbdV1.mqh` | ⚪ Menunggu Ph 2 |
 | **4** | Living TradingArea & State 0–5 | Objek living area, 6-level exhaustion, Hard TP/SL | `TradingArea.mqh` | ⚪ Menunggu Ph 3 |
 | **5** | Agent Proactive Limit Order | Kuota dinamis, fresh depth grid, auto-cancel pada TP | `AgentGridPlacer.mqh` | ⚪ Menunggu Ph 4 |
