@@ -837,18 +837,20 @@ private:
    //+------------------------------------------------------------------+
    //| Phase 2.2 Evaluator: BOS / ChoCH Wajib Body Close on Origin TF   |
    //| Evaluates swing level matching the zone's origin period          |
+   //| High-Precision Engine: 5-bar structural pivot & pullback depth   |
    //+------------------------------------------------------------------+
    void EvaluatePhase2_2_BOS(const string symbol, SRBRDBDArea &area)
    {
       area.passBOS        = false;
       area.bosBrokenLevel = 0.0;
+      area.bosSwingTime   = 0;
       area.scorePhase2_2  = 0;
 
       ENUM_TIMEFRAMES tf = area.period;
       if(tf <= 0) tf = PERIOD_CURRENT;
 
       // Find bar shifts on origin timeframe
-      int legOutBar   = iBarShift(symbol, tf, area.legOutTime, false);
+      int legOutBar    = iBarShift(symbol, tf, area.legOutTime, false);
       int baseStartBar = iBarShift(symbol, tf, area.baseStart, false);
       if(legOutBar < 0 || baseStartBar < 0) return;
 
@@ -857,38 +859,85 @@ private:
       ArraySetAsSeries(outRates, true);
       if(CopyRates(symbol, tf, legOutBar, 1, outRates) < 1) return;
       double legOutClose = outRates[0].close;
-      double legOutHigh  = outRates[0].high;
-      double legOutLow   = outRates[0].low;
 
-      // Scan prior swings: lookback window before baseStartBar on origin TF
-      int lookback = 30;
-      int startSearchBar = baseStartBar + 1; // Prior to base start
+      // Scan prior swings with clearance:
+      // Leave at least 2 bars clearance before baseStartBar to avoid measuring the Leg-In itself
+      int clearanceBars  = 2;
+      int startSearchBar = baseStartBar + clearanceBars;
+      int lookback       = 45; // Generous window for true structural swing
 
       MqlRates priorRates[];
       ArraySetAsSeries(priorRates, true);
       int copied = CopyRates(symbol, tf, startSearchBar, lookback, priorRates);
-      if(copied < 3) return;
+      if(copied < 7) return; // Need at least 5-7 bars to detect a 5-bar pivot with clearance
+
+      // Minimum required pullback depth between swing and base
+      // At least equal to zone height, with a floor of 80 points ($0.80 on Gold)
+      double minPullback = MathMax(area.zoneHeight * 1.0, 80.0 * _Point);
 
       if(area.type == RBRDBD_RBR)
       {
-         // Find recent Swing High prior to base
-         // 1. First priority: look for a fractal peak (high[i] > high[i-1] && high[i] > high[i+1])
          double swingHigh = 0.0;
          datetime sTime   = 0;
-         for(int i = 1; i < copied - 1; i++)
+
+         // Priority 1: High-Precision 5-Bar Structural Peak (2 left, 2 right) with Pullback Depth
+         for(int i = 2; i < copied - 2; i++)
          {
-            if(priorRates[i].high >= priorRates[i-1].high && priorRates[i].high >= priorRates[i+1].high)
+            bool isPeak = (priorRates[i].high > priorRates[i - 1].high &&
+                           priorRates[i].high > priorRates[i - 2].high &&
+                           priorRates[i].high >= priorRates[i + 1].high &&
+                           priorRates[i].high >= priorRates[i + 2].high);
+
+            if(isPeak)
             {
-               swingHigh = priorRates[i].high;
-               sTime     = priorRates[i].time;
-               break; // Found nearest prominent swing high!
+               // Measure pullback valley between base start (index 0) and this peak (index i)
+               double lowestInValley = priorRates[0].low;
+               for(int k = 1; k < i; k++)
+               {
+                  if(priorRates[k].low < lowestInValley)
+                     lowestInValley = priorRates[k].low;
+               }
+
+               double pullback = priorRates[i].high - lowestInValley;
+               if(pullback >= minPullback)
+               {
+                  swingHigh = priorRates[i].high;
+                  sTime     = priorRates[i].time;
+                  break; // Found nearest prominent structural swing high!
+               }
             }
          }
 
-         // Fallback: if no 3-bar fractal peak, take the absolute highest high in the lookback
+         // Priority 2 Fallback: If no 5-bar pivot with pullback found, search prominent 3-bar pivot with pullback
          if(swingHigh <= 0.0)
          {
-            for(int i = 0; i < copied; i++)
+            for(int i = 1; i < copied - 1; i++)
+            {
+               bool is3BarPeak = (priorRates[i].high > priorRates[i - 1].high &&
+                                  priorRates[i].high >= priorRates[i + 1].high);
+               if(is3BarPeak)
+               {
+                  double lowestInValley = priorRates[0].low;
+                  for(int k = 1; k < i; k++)
+                  {
+                     if(priorRates[k].low < lowestInValley)
+                        lowestInValley = priorRates[k].low;
+                  }
+
+                  if((priorRates[i].high - lowestInValley) >= minPullback)
+                  {
+                     swingHigh = priorRates[i].high;
+                     sTime     = priorRates[i].time;
+                     break;
+                  }
+               }
+            }
+         }
+
+         // Priority 3 Fallback: Major Highest High in lookback that has clear clearance from base
+         if(swingHigh <= 0.0)
+         {
+            for(int i = 2; i < copied; i++)
             {
                if(priorRates[i].high > swingHigh)
                {
@@ -911,26 +960,69 @@ private:
       }
       else if(area.type == RBRDBD_DBD)
       {
-         // Find recent Swing Low prior to base
-         // 1. First priority: look for a fractal trough (low[i] <= low[i-1] && low[i] <= low[i+1])
          double swingLow = 0.0;
          datetime sTime  = 0;
-         for(int i = 1; i < copied - 1; i++)
+
+         // Priority 1: High-Precision 5-Bar Structural Trough (2 left, 2 right) with Pullback Depth
+         for(int i = 2; i < copied - 2; i++)
          {
-            if(priorRates[i].low <= priorRates[i-1].low && priorRates[i].low <= priorRates[i+1].low)
+            bool isTrough = (priorRates[i].low < priorRates[i - 1].low &&
+                             priorRates[i].low < priorRates[i - 2].low &&
+                             priorRates[i].low <= priorRates[i + 1].low &&
+                             priorRates[i].low <= priorRates[i + 2].low);
+
+            if(isTrough)
             {
-               swingLow = priorRates[i].low;
-               sTime    = priorRates[i].time;
-               break; // Found nearest prominent swing low!
+               // Measure bounce peak between base start (index 0) and this trough (index i)
+               double highestInBounce = priorRates[0].high;
+               for(int k = 1; k < i; k++)
+               {
+                  if(priorRates[k].high > highestInBounce)
+                     highestInBounce = priorRates[k].high;
+               }
+
+               double bounce = highestInBounce - priorRates[i].low;
+               if(bounce >= minPullback)
+               {
+                  swingLow = priorRates[i].low;
+                  sTime    = priorRates[i].time;
+                  break; // Found nearest prominent structural swing low!
+               }
             }
          }
 
-         // Fallback: if no 3-bar fractal trough, take the absolute lowest low in the lookback
+         // Priority 2 Fallback: 3-Bar Trough with Bounce Height
          if(swingLow <= 0.0)
          {
-            swingLow = priorRates[0].low;
-            sTime    = priorRates[0].time;
-            for(int i = 1; i < copied; i++)
+            for(int i = 1; i < copied - 1; i++)
+            {
+               bool is3BarTrough = (priorRates[i].low < priorRates[i - 1].low &&
+                                    priorRates[i].low <= priorRates[i + 1].low);
+               if(is3BarTrough)
+               {
+                  double highestInBounce = priorRates[0].high;
+                  for(int k = 1; k < i; k++)
+                  {
+                     if(priorRates[k].high > highestInBounce)
+                        highestInBounce = priorRates[k].high;
+                  }
+
+                  if((highestInBounce - priorRates[i].low) >= minPullback)
+                  {
+                     swingLow = priorRates[i].low;
+                     sTime    = priorRates[i].time;
+                     break;
+                  }
+               }
+            }
+         }
+
+         // Priority 3 Fallback: Major Lowest Low in lookback with clearance
+         if(swingLow <= 0.0)
+         {
+            swingLow = priorRates[2].low;
+            sTime    = priorRates[2].time;
+            for(int i = 3; i < copied; i++)
             {
                if(priorRates[i].low < swingLow)
                {
