@@ -13,6 +13,7 @@
 //+------------------------------------------------------------------+
 #include "..\include\arbud\structure\rbrdbdV1.mqh"
 #include "..\include\arbud\structure\LivingTradingArea.mqh"
+#include "..\include\arbud\trade\ProactiveLimitPlacer.mqh"
 
 //+------------------------------------------------------------------+
 //| Inputs                                                           |
@@ -38,6 +39,12 @@ input group "=== Phase 4 Living TradingArea & Exhaustion ==="
 input bool              InpEnablePhase4      = true;              // Enable Phase 4 Living TradingArea Corridor
 input bool              InpDrawTradingArea   = true;              // Draw TradingArea (Buy/Sell Boxes, TP50, Hard SL)
 
+input group "=== Phase 5 Proactive Limit Order Placer ==="
+input bool              InpEnablePhase5      = true;              // Enable Phase 5 Proactive Limit Grid
+input int               InpMaxPosPerSide     = 5;                 // Max Positions at Fresh L0 (1~10)
+input double            InpFixedLot          = 0.01;              // Fixed Lot per Limit Order
+input ulong             InpMagicNumber       = 888222;            // EA Magic Number
+
 input group "=== Dynamic Memory & Garbage Collection ==="
 input bool              InpEnableGC          = true;              // Enable Dynamic Garbage Collection
 input int               InpMaxMemoryBars     = 1500;              // Max Zone Age in M1 Bars before Purge
@@ -54,6 +61,7 @@ input color             InpColorMitigated    = clrGray;           // Fully Mitig
 //+------------------------------------------------------------------+
 CRBRDBDV1                 ExtRBRDBD;
 CLivingTradingAreaManager ExtTradingArea;
+CProactiveLimitPlacer     ExtLimitPlacer;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -88,6 +96,9 @@ int OnInit()
    ExtTradingArea.SetDrawEnabled(InpDrawTradingArea);
    ExtTradingArea.SetBaseTF(PERIOD_M1);
 
+   // 4. Configure Proactive Limit Placer
+   ExtLimitPlacer.Init(_Symbol, InpMagicNumber, InpMaxPosPerSide, InpFixedLot);
+
    PrintFormat("[rbrdbdV1Sample] Initialized on %s (PERIOD_M1). Total active zones: %d", 
                _Symbol, ExtRBRDBD.GetValidAreasCount(PERIOD_M1));
 
@@ -102,6 +113,10 @@ void OnDeinit(const int reason)
    // Clean up all rectangle boxes, text labels, and TradingArea objects
    ExtRBRDBD.ClearChartObjects();
    ExtTradingArea.ClearChartObjects();
+
+   // Cancel any pending limit orders when removed
+   ExtLimitPlacer.CancelAllPendingOrders();
+
    PrintFormat("=== [rbrdbdV1Sample] Deinitialized. Objects cleared. Reason: %d ===", reason);
 }
 
@@ -140,9 +155,15 @@ void OnTick()
    if(InpEnablePhase4)
    {
       ExtTradingArea.UpdateTradingArea(_Symbol, ExtRBRDBD, bid, ask);
+
+      // 4. Proactive Limit Order Placement & Management (Phase 5)
+      if(InpEnablePhase5)
+      {
+         ExtLimitPlacer.ManageLimitGrids(ExtTradingArea.GetActiveArea(), bid, ask);
+      }
    }
 
-   // 4. Update Chart HUD Info
+   // 5. Update Chart HUD Info
    SRBRDBDArea areas[];
    if(ExtRBRDBD.GetAreas(PERIOD_M1, areas))
    {
@@ -219,15 +240,22 @@ void OnTick()
             string bOrderOK = area.hasOrganicFloor && area.floorStrength >= 1 ? "READY" : "BLOCKED";
             string sOrderOK = area.hasOrganicRoof  && area.roofStrength >= 1  ? "READY" : "BLOCKED";
 
+            int openBuyPos  = ExtLimitPlacer.CountOpenPositionsByType(POSITION_TYPE_BUY);
+            int activeBuyLim = ExtLimitPlacer.CountPendingOrdersByType(ORDER_TYPE_BUY_LIMIT);
+            int openSellPos = ExtLimitPlacer.CountOpenPositionsByType(POSITION_TYPE_SELL);
+            int activeSellLim = ExtLimitPlacer.CountPendingOrdersByType(ORDER_TYPE_SELL_LIMIT);
+
             tradingAreaHUD = StringFormat("\n=== ACTIVE LIVING TRADING AREA (#%d) ===\n" +
                                           "Corridor Range: %.2f USD | Hard TP 50%%: %.2f\n" +
-                                          "Floor: %.2f [%s] -> Buy Area [L%d (%s)] Limit: %s\n" +
-                                          "Roof : %.2f [%s] -> Sell Area [L%d (%s)] Limit: %s\n" +
+                                          "Floor: %.2f [%s] -> Buy Area [L%d (%s)] Limit: %s (Cap: %d | Active: %d | Open: %d)\n" +
+                                          "Roof : %.2f [%s] -> Sell Area [L%d (%s)] Limit: %s (Cap: %d | Active: %d | Open: %d)\n" +
                                           "Hard SL Boundaries: Floor SL: %.2f | Roof SL: %.2f",
                                           area.areaId,
                                           area.totalRange, area.hardTP50,
                                           area.floorBoundary, fStr, (int)area.buyExhaustionLevel, bExh, bOrderOK,
+                                          ExtLimitPlacer.CalculateAllowedCapacity(area.buyExhaustionLevel), activeBuyLim, openBuyPos,
                                           area.roofBoundary, rStr, (int)area.sellExhaustionLevel, sExh, sOrderOK,
+                                          ExtLimitPlacer.CalculateAllowedCapacity(area.sellExhaustionLevel), activeSellLim, openSellPos,
                                           area.floorHardSL, area.roofHardSL);
          }
          else
