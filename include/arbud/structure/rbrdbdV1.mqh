@@ -71,6 +71,14 @@ struct SRBRDBDArea
    double            htfZoneDistal;    // Distal edge of parent HTF zone
    int               scorePhase2_4A;   // +1 Point if passHTFZone is true, 0 otherwise
 
+   // Phase 2.4B: HTF Swing High/Low Structure Reaction (Pivot / Liquidity Tap)
+   bool              passHTFSwing;     // True if zone base taps/sweeps a prominent HTF (M15/H1) structural swing
+   ENUM_TIMEFRAMES   htfSwingTF;       // Timeframe of the reacted HTF swing (PERIOD_M15 or PERIOD_H1)
+   double            htfSwingLevel;    // Price level of the reacted HTF swing
+   datetime          htfSwingTime;     // Timestamp of the HTF swing bar
+   double            htfSwingDistPoints;// Distance in points from base to swing level
+   int               scorePhase2_4B;   // +1 Point if passHTFSwing is true, 0 otherwise
+
    int               totalScore;       // Phase 2 total score accumulator (0 to 5)
 
    void Init()
@@ -117,6 +125,13 @@ struct SRBRDBDArea
       htfZoneProximal   = 0.0;
       htfZoneDistal     = 0.0;
       scorePhase2_4A    = 0;
+
+      passHTFSwing      = false;
+      htfSwingTF        = PERIOD_CURRENT;
+      htfSwingLevel     = 0.0;
+      htfSwingTime      = 0;
+      htfSwingDistPoints= 0.0;
+      scorePhase2_4B    = 0;
 
       totalScore        = 0;
    }
@@ -180,13 +195,14 @@ private:
    bool                 m_enablePhase2_2; // Origin TF BOS / ChoCH Body Close
    bool                 m_enablePhase2_3; // Origin TF Direct Attached FVG
    bool                 m_enablePhase2_4A;// HTF RBR/DBD Parent Zone Reaction
+   bool                 m_enablePhase2_4B;// HTF Swing High/Low Structure Reaction
    double               m_minFVGGapPoints;// Minimum FVG gap in points (default 50 = $0.50 on Gold)
 
 public:
    CRBRDBDV1() : m_totalTFs(0), m_objPrefix("RBRDBD_"),
                  m_enablePhase2_1(true), m_enablePhase2_2(true),
                  m_enablePhase2_3(true), m_enablePhase2_4A(true),
-                 m_minFVGGapPoints(50.0)
+                 m_enablePhase2_4B(true), m_minFVGGapPoints(50.0)
    {
       ArrayResize(m_tfList, 0);
    }
@@ -198,12 +214,14 @@ public:
                           const bool enablePhase2_2,
                           const bool enablePhase2_3 = true,
                           const bool enablePhase2_4A = true,
+                          const bool enablePhase2_4B = true,
                           const double minFVGGapPoints = 50.0)
    {
       m_enablePhase2_1   = enablePhase2_1;
       m_enablePhase2_2   = enablePhase2_2;
       m_enablePhase2_3   = enablePhase2_3;
       m_enablePhase2_4A  = enablePhase2_4A;
+      m_enablePhase2_4B  = enablePhase2_4B;
       m_minFVGGapPoints  = minFVGGapPoints;
    }
 
@@ -211,6 +229,7 @@ public:
    bool GetPhase2_2Enabled()  const { return m_enablePhase2_2; }
    bool GetPhase2_3Enabled()  const { return m_enablePhase2_3; }
    bool GetPhase2_4AEnabled() const { return m_enablePhase2_4A; }
+   bool GetPhase2_4BEnabled() const { return m_enablePhase2_4B; }
 
    ~CRBRDBDV1()
    {
@@ -336,7 +355,8 @@ public:
                data.areas[a].totalScore = data.areas[a].scorePhase2_1 +
                                           data.areas[a].scorePhase2_2 +
                                           data.areas[a].scorePhase2_3 +
-                                          data.areas[a].scorePhase2_4A;
+                                          data.areas[a].scorePhase2_4A +
+                                          data.areas[a].scorePhase2_4B;
             }
          }
       }
@@ -852,11 +872,21 @@ private:
          data.areas[size].scorePhase2_4A = 0;
       }
 
+      // --- PHASE 2.4B: HTF Swing High/Low Structure Reaction (Pivot / Liquidity Tap) ---
+      if(m_enablePhase2_4B)
+         EvaluatePhase2_4B_HTFSwingReaction(symbol, data.areas[size]);
+      else
+      {
+         data.areas[size].passHTFSwing   = false;
+         data.areas[size].scorePhase2_4B = 0;
+      }
+
       // Phase 2 Total Score Accumulator (Sums active modules)
       data.areas[size].totalScore = data.areas[size].scorePhase2_1 +
                                     data.areas[size].scorePhase2_2 +
                                     data.areas[size].scorePhase2_3 +
-                                    data.areas[size].scorePhase2_4A;
+                                    data.areas[size].scorePhase2_4A +
+                                    data.areas[size].scorePhase2_4B;
 
       string lbl = (type == RBRDBD_RBR) ? "RBR" : "DBD";
       data.areas[size].objName = m_objPrefix + EnumToString(finalPeriod) + "_" + lbl + "_" + TimeToString(bStart, TIME_DATE|TIME_MINUTES);
@@ -1329,6 +1359,117 @@ private:
    }
 
    //+------------------------------------------------------------------+
+   //| Phase 2.4B Evaluator: HTF Swing High/Low Structure Reaction       |
+   //| Validates if zone base taps or sweeps an established structural   |
+   //| pivot high/low on M15 or H1 within tolerance (0 - 50 points)     |
+   //+------------------------------------------------------------------+
+   void EvaluatePhase2_4B_HTFSwingReaction(const string symbol, SRBRDBDArea &area)
+   {
+      area.passHTFSwing       = false;
+      area.htfSwingTF         = PERIOD_CURRENT;
+      area.htfSwingLevel      = 0.0;
+      area.htfSwingTime       = 0;
+      area.htfSwingDistPoints = 0.0;
+      area.scorePhase2_4B     = 0;
+
+      ENUM_TIMEFRAMES htfLadder[2] = { PERIOD_M15, PERIOD_H1 };
+      double maxDistTolerance = 50.0 * _Point; // 50 points tolerance ($0.50 on Gold)
+      int lookbackHTFBars     = 100;           // Lookback 100 bars on HTF to discover prominent swings
+
+      for(int i = 0; i < 2; i++)
+      {
+         ENUM_TIMEFRAMES htfTF = htfLadder[i];
+         int baseStartHTFBar   = iBarShift(symbol, htfTF, area.baseStart, false);
+         if(baseStartHTFBar < 0) continue;
+
+         // Search starts at least 1 bar prior to baseStartHTFBar so we look at already established swings
+         int scanStartBar = baseStartHTFBar + 1;
+         MqlRates rates[];
+         ArraySetAsSeries(rates, true);
+         int copied = CopyRates(symbol, htfTF, scanStartBar, lookbackHTFBars, rates);
+         if(copied < 7) continue; // Need at least 5-7 bars for 5-bar pivot validation
+
+         double bestDist = DBL_MAX;
+         double bestLevel = 0.0;
+         datetime bestTime = 0;
+         bool found = false;
+
+         if(area.type == RBRDBD_RBR)
+         {
+            // For Bullish Demand: Look for established HTF Swing Lows (Valley/Support Pivot)
+            double ltfLowest = MathMin(area.proximal, area.distal);
+
+            for(int k = 2; k < copied - 2; k++)
+            {
+               // 5-bar structural valley (2 left, 2 right)
+               bool isValley = (rates[k].low < rates[k - 1].low &&
+                                rates[k].low < rates[k - 2].low &&
+                                rates[k].low < rates[k + 1].low &&
+                                rates[k].low < rates[k + 2].low);
+               if(isValley)
+               {
+                  double swLow = rates[k].low;
+                  // Reaction criteria: LTF base touches or slightly sweeps below HTF Swing Low
+                  // |ltfLowest - swLow| <= maxDistTolerance, or ltfLowest <= swLow + maxDistTolerance
+                  double dist = MathAbs(ltfLowest - swLow);
+                  if(dist <= maxDistTolerance)
+                  {
+                     if(dist < bestDist)
+                     {
+                        bestDist  = dist;
+                        bestLevel = swLow;
+                        bestTime  = rates[k].time;
+                        found     = true;
+                     }
+                  }
+               }
+            }
+         }
+         else if(area.type == RBRDBD_DBD)
+         {
+            // For Bearish Supply: Look for established HTF Swing Highs (Peak/Resistance Pivot)
+            double ltfHighest = MathMax(area.proximal, area.distal);
+
+            for(int k = 2; k < copied - 2; k++)
+            {
+               // 5-bar structural peak (2 left, 2 right)
+               bool isPeak = (rates[k].high > rates[k - 1].high &&
+                              rates[k].high > rates[k - 2].high &&
+                              rates[k].high > rates[k + 1].high &&
+                              rates[k].high > rates[k + 2].high);
+               if(isPeak)
+               {
+                  double swHigh = rates[k].high;
+                  // Reaction criteria: LTF base touches or slightly sweeps above HTF Swing High
+                  double dist = MathAbs(ltfHighest - swHigh);
+                  if(dist <= maxDistTolerance)
+                  {
+                     if(dist < bestDist)
+                     {
+                        bestDist  = dist;
+                        bestLevel = swHigh;
+                        bestTime  = rates[k].time;
+                        found     = true;
+                     }
+                  }
+               }
+            }
+         }
+
+         if(found)
+         {
+            area.passHTFSwing       = true;
+            area.htfSwingTF         = htfTF;
+            area.htfSwingLevel      = bestLevel;
+            area.htfSwingTime       = bestTime;
+            area.htfSwingDistPoints = NormalizeDouble(bestDist / _Point, 1);
+            area.scorePhase2_4B     = 1;
+            return; // Matched on M15 first, or fallback to H1
+         }
+      }
+   }
+
+   //+------------------------------------------------------------------+
    //| Recursive MTF Base Consolidation Scanner                         |
    //| If base candles are excessive in M1 (> maxBaseCandles),          |
    //| climb TF ladder to check if it compacts into 1-3 boring candles   |
@@ -1547,7 +1688,15 @@ private:
 
          // Phase 2 Quality Score Info (Adaptive to Active Switches)
          string scoreStr = "";
-         if(m_enablePhase2_4A && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3)
+         if(m_enablePhase2_4B && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A)
+         {
+            // Pure Phase 2.4B Test Mode (Isolated HTF Swing High/Low Reaction)
+            if(area.scorePhase2_4B > 0)
+               scoreStr = StringFormat("Sw:%s(%.0fpt|+1)", GetTFShortName(area.htfSwingTF), area.htfSwingDistPoints);
+            else
+               scoreStr = "no-Sw (0pt)";
+         }
+         else if(m_enablePhase2_4A && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4B)
          {
             // Pure Phase 2.4A Test Mode (Isolated HTF RBR/DBD Parent Reaction)
             if(area.scorePhase2_4A > 0)
@@ -1555,7 +1704,7 @@ private:
             else
                scoreStr = "no-HTF (0pt)";
          }
-         else if(m_enablePhase2_3 && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_4A)
+         else if(m_enablePhase2_3 && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_4A && !m_enablePhase2_4B)
          {
             // Pure Phase 2.3 Test Mode (Isolated FVG test)
             if(area.scorePhase2_3 > 0)
@@ -1563,7 +1712,7 @@ private:
             else
                scoreStr = "no-FVG (0pt)";
          }
-         else if(m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A)
+         else if(m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A && !m_enablePhase2_4B)
          {
             // Pure Phase 2.1 Test Mode
             if(area.scorePhase2_1 > 0)
@@ -1571,7 +1720,7 @@ private:
             else
                scoreStr = "no-Tight (0pt)";
          }
-         else if(!m_enablePhase2_1 && m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A)
+         else if(!m_enablePhase2_1 && m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A && !m_enablePhase2_4B)
          {
             // Pure Phase 2.2 Test Mode (Isolated BOS test)
             if(area.scorePhase2_2 > 0)
@@ -1591,6 +1740,8 @@ private:
                qInfo += "FVG ";
             if(area.scorePhase2_4A > 0)
                qInfo += "H:" + GetTFShortName(area.htfZoneTF) + " ";
+            if(area.scorePhase2_4B > 0)
+               qInfo += "S:" + GetTFShortName(area.htfSwingTF) + " ";
 
             if(StringLen(qInfo) > 0)
                StringTrimRight(qInfo);
