@@ -54,6 +54,15 @@ struct SRBRDBDArea
    datetime          bosSwingTime;     // Time of the swing high/low bar
    int               scorePhase2_2;    // +1 Point if passBOS is true, 0 otherwise
 
+   // Phase 2.3: Direct Attached FVG (Magnet Retest) on Origin Timeframe
+   bool              passDirectFVG;    // True if Leg-Out forms a significant direct attached FVG
+   double            fvgTopPrice;      // Upper boundary of the FVG
+   double            fvgBotPrice;      // Lower boundary of the FVG
+   double            fvgGapPoints;     // Width of the FVG in points
+   datetime          fvgStartTime;     // Start timestamp of the FVG (Leg-Out candle)
+   datetime          fvgEndTime;       // End timestamp of the FVG (Candle after Leg-Out)
+   int               scorePhase2_3;    // +1 Point if passDirectFVG is true, 0 otherwise
+
    int               totalScore;       // Phase 2 total score accumulator (0 to 5)
 
    void Init()
@@ -85,6 +94,14 @@ struct SRBRDBDArea
       bosBrokenLevel    = 0.0;
       bosSwingTime      = 0;
       scorePhase2_2     = 0;
+
+      passDirectFVG     = false;
+      fvgTopPrice       = 0.0;
+      fvgBotPrice       = 0.0;
+      fvgGapPoints      = 0.0;
+      fvgStartTime      = 0;
+      fvgEndTime        = 0;
+      scorePhase2_3     = 0;
 
       totalScore        = 0;
    }
@@ -146,10 +163,13 @@ private:
    // Phase 2 Modular Test Switches (Default true)
    bool                 m_enablePhase2_1; // Base Tightness & MTF Reflection
    bool                 m_enablePhase2_2; // Origin TF BOS / ChoCH Body Close
+   bool                 m_enablePhase2_3; // Origin TF Direct Attached FVG
+   double               m_minFVGGapPoints;// Minimum FVG gap in points (default 50 = $0.50 on Gold)
 
 public:
    CRBRDBDV1() : m_totalTFs(0), m_objPrefix("RBRDBD_"),
-                 m_enablePhase2_1(true), m_enablePhase2_2(true)
+                 m_enablePhase2_1(true), m_enablePhase2_2(true),
+                 m_enablePhase2_3(true), m_minFVGGapPoints(50.0)
    {
       ArrayResize(m_tfList, 0);
    }
@@ -157,14 +177,20 @@ public:
    //+------------------------------------------------------------------+
    //| Configure Phase 2 Modular Test Switches                          |
    //+------------------------------------------------------------------+
-   void SetPhase2Switches(const bool enablePhase2_1, const bool enablePhase2_2)
+   void SetPhase2Switches(const bool enablePhase2_1,
+                          const bool enablePhase2_2,
+                          const bool enablePhase2_3 = true,
+                          const double minFVGGapPoints = 50.0)
    {
-      m_enablePhase2_1 = enablePhase2_1;
-      m_enablePhase2_2 = enablePhase2_2;
+      m_enablePhase2_1  = enablePhase2_1;
+      m_enablePhase2_2  = enablePhase2_2;
+      m_enablePhase2_3  = enablePhase2_3;
+      m_minFVGGapPoints = minFVGGapPoints;
    }
 
    bool GetPhase2_1Enabled() const { return m_enablePhase2_1; }
    bool GetPhase2_2Enabled() const { return m_enablePhase2_2; }
+   bool GetPhase2_3Enabled() const { return m_enablePhase2_3; }
 
    ~CRBRDBDV1()
    {
@@ -340,6 +366,7 @@ public:
                ObjectDelete(0, m_tfList[i].areas[a].objName);
                ObjectDelete(0, m_tfList[i].areas[a].objName + "_lbl");
                ObjectDelete(0, m_tfList[i].areas[a].objName + "_bos");
+               ObjectDelete(0, m_tfList[i].areas[a].objName + "_fvg");
 
                // Shift array to remove element
                int total = ArraySize(m_tfList[i].areas);
@@ -734,8 +761,19 @@ private:
          data.areas[size].scorePhase2_2 = 0;
       }
 
+      // --- PHASE 2.3: Direct Attached FVG (Magnet Retest) on Origin Timeframe ---
+      if(m_enablePhase2_3)
+         EvaluatePhase2_3_AttachedFVG(symbol, data.areas[size]);
+      else
+      {
+         data.areas[size].passDirectFVG = false;
+         data.areas[size].scorePhase2_3 = 0;
+      }
+
       // Phase 2 Total Score Accumulator (Sums active modules)
-      data.areas[size].totalScore = data.areas[size].scorePhase2_1 + data.areas[size].scorePhase2_2;
+      data.areas[size].totalScore = data.areas[size].scorePhase2_1 +
+                                    data.areas[size].scorePhase2_2 +
+                                    data.areas[size].scorePhase2_3;
 
       string lbl = (type == RBRDBD_RBR) ? "RBR" : "DBD";
       data.areas[size].objName = m_objPrefix + EnumToString(finalPeriod) + "_" + lbl + "_" + TimeToString(bStart, TIME_DATE|TIME_MINUTES);
@@ -1048,6 +1086,91 @@ private:
    }
 
    //+------------------------------------------------------------------+
+   //| Phase 2.3 Evaluator: Direct Attached FVG on Origin Timeframe     |
+   //| Validates 3-candle imbalance around Leg-Out on zone.period       |
+   //| (M1 zone -> M1 FVG, M3 zone -> M3 FVG, M5 zone -> M5 FVG, etc.)  |
+   //+------------------------------------------------------------------+
+   void EvaluatePhase2_3_AttachedFVG(const string symbol, SRBRDBDArea &area)
+   {
+      area.passDirectFVG = false;
+      area.fvgTopPrice   = 0.0;
+      area.fvgBotPrice   = 0.0;
+      area.fvgGapPoints  = 0.0;
+      area.fvgStartTime  = 0;
+      area.fvgEndTime    = 0;
+      area.scorePhase2_3 = 0;
+
+      ENUM_TIMEFRAMES tf = area.period;
+      if(tf <= 0) tf = PERIOD_CURRENT;
+
+      // Locate Leg-Out candle index on its origin timeframe
+      int legOutBar = iBarShift(symbol, tf, area.legOutTime, false);
+      if(legOutBar < 1) return; // Need at least 1 bar after legOut (legOutBar - 1)
+
+      // Copy 3 consecutive candles around Leg-Out on origin timeframe:
+      // Candle 1: Before Leg-Out (shift = legOutBar + 1)
+      // Candle 2: Leg-Out candle (shift = legOutBar)
+      // Candle 3: After Leg-Out  (shift = legOutBar - 1)
+      MqlRates rates[];
+      ArraySetAsSeries(rates, true);
+      if(CopyRates(symbol, tf, legOutBar - 1, 3, rates) < 3) return;
+
+      // When ArraySetAsSeries is true:
+      // rates[0] = shift legOutBar - 1 (Candle 3: After Leg-Out)
+      // rates[1] = shift legOutBar     (Candle 2: Leg-Out candle)
+      // rates[2] = shift legOutBar + 1 (Candle 1: Before Leg-Out / Base end)
+
+      double c1High = rates[2].high;
+      double c1Low  = rates[2].low;
+      double c3High = rates[0].high;
+      double c3Low  = rates[0].low;
+
+      double minGap = m_minFVGGapPoints * _Point;
+      double maxAttachTolerance = 15.0 * _Point; // 15 points tolerance to Base proximal
+
+      if(area.type == RBRDBD_RBR)
+      {
+         // Bullish FVG: Gap between Candle 1 High and Candle 3 Low
+         double gap = c3Low - c1High;
+         if(gap >= minGap)
+         {
+            // Verify Direct Attachment: Lower boundary of FVG (c1High) must touch or align near Base Proximal (roof)
+            double attachDist = MathAbs(c1High - area.proximal);
+            if(attachDist <= maxAttachTolerance)
+            {
+               area.passDirectFVG = true;
+               area.fvgTopPrice   = c3Low;
+               area.fvgBotPrice   = c1High;
+               area.fvgGapPoints  = NormalizeDouble(gap / _Point, 1);
+               area.fvgStartTime  = rates[1].time; // Leg-Out time
+               area.fvgEndTime    = rates[0].time; // Candle 3 time
+               area.scorePhase2_3 = 1;
+            }
+         }
+      }
+      else if(area.type == RBRDBD_DBD)
+      {
+         // Bearish FVG: Gap between Candle 1 Low and Candle 3 High
+         double gap = c1Low - c3High;
+         if(gap >= minGap)
+         {
+            // Verify Direct Attachment: Upper boundary of FVG (c1Low) must touch or align near Base Proximal (floor)
+            double attachDist = MathAbs(c1Low - area.proximal);
+            if(attachDist <= maxAttachTolerance)
+            {
+               area.passDirectFVG = true;
+               area.fvgTopPrice   = c1Low;
+               area.fvgBotPrice   = c3High;
+               area.fvgGapPoints  = NormalizeDouble(gap / _Point, 1);
+               area.fvgStartTime  = rates[1].time; // Leg-Out time
+               area.fvgEndTime    = rates[0].time; // Candle 3 time
+               area.scorePhase2_3 = 1;
+            }
+         }
+      }
+   }
+
+   //+------------------------------------------------------------------+
    //| Recursive MTF Base Consolidation Scanner                         |
    //| If base candles are excessive in M1 (> maxBaseCandles),          |
    //| climb TF ladder to check if it compacts into 1-3 boring candles   |
@@ -1266,7 +1389,15 @@ private:
 
          // Phase 2 Quality Score Info (Adaptive to Active Switches)
          string scoreStr = "";
-         if(m_enablePhase2_1 && !m_enablePhase2_2)
+         if(m_enablePhase2_3 && !m_enablePhase2_1 && !m_enablePhase2_2)
+         {
+            // Pure Phase 2.3 Test Mode (Isolated FVG test)
+            if(area.scorePhase2_3 > 0)
+               scoreStr = StringFormat("FVG(%.0fpt|+1)", area.fvgGapPoints);
+            else
+               scoreStr = "no-FVG (0pt)";
+         }
+         else if(m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3)
          {
             // Pure Phase 2.1 Test Mode
             if(area.scorePhase2_1 > 0)
@@ -1274,7 +1405,7 @@ private:
             else
                scoreStr = "no-Tight (0pt)";
          }
-         else if(!m_enablePhase2_1 && m_enablePhase2_2)
+         else if(!m_enablePhase2_1 && m_enablePhase2_2 && !m_enablePhase2_3)
          {
             // Pure Phase 2.2 Test Mode (Isolated BOS test)
             if(area.scorePhase2_2 > 0)
@@ -1290,6 +1421,8 @@ private:
                qInfo += "T:" + GetTFShortName(area.reflTF) + " ";
             if(area.scorePhase2_2 > 0)
                qInfo += "BOS ";
+            if(area.scorePhase2_3 > 0)
+               qInfo += "FVG ";
 
             if(StringLen(qInfo) > 0)
                StringTrimRight(qInfo);
@@ -1372,6 +1505,39 @@ private:
          {
             if(ObjectFind(0, bosLineName) >= 0)
                ObjectDelete(0, bosLineName);
+         }
+
+         // Draw / Update Direct Attached FVG Visual Box (if FVG passed and enabled)
+         string fvgBoxName = rectName + "_fvg";
+         if(m_enablePhase2_3 && area.passDirectFVG && area.fvgTopPrice > 0.0 && area.fvgBotPrice > 0.0)
+         {
+            datetime fvgStart = area.fvgStartTime;
+            datetime fvgEnd   = futureTime; // Extend into future until retested or dynamic zone lifetime
+
+            double fvgHigh = MathMax(area.fvgTopPrice, area.fvgBotPrice);
+            double fvgLow  = MathMin(area.fvgTopPrice, area.fvgBotPrice);
+
+            color fvgColor = (area.type == RBRDBD_RBR) ? clrMediumSpringGreen : clrMediumOrchid;
+
+            if(ObjectFind(0, fvgBoxName) < 0)
+            {
+               ObjectCreate(0, fvgBoxName, OBJ_RECTANGLE, 0, fvgStart, fvgHigh, fvgEnd, fvgLow);
+            }
+            else
+            {
+               ObjectMove(0, fvgBoxName, 0, fvgStart, fvgHigh);
+               ObjectMove(0, fvgBoxName, 1, fvgEnd, fvgLow);
+            }
+            ObjectSetInteger(0, fvgBoxName, OBJPROP_COLOR, fvgColor);
+            ObjectSetInteger(0, fvgBoxName, OBJPROP_FILL, true);
+            ObjectSetInteger(0, fvgBoxName, OBJPROP_BACK, true); // Behind candles
+            ObjectSetInteger(0, fvgBoxName, OBJPROP_SELECTABLE, false);
+            ObjectSetInteger(0, fvgBoxName, OBJPROP_STYLE, STYLE_DOT);
+         }
+         else
+         {
+            if(ObjectFind(0, fvgBoxName) >= 0)
+               ObjectDelete(0, fvgBoxName);
          }
       }
 
