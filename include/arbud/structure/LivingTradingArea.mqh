@@ -25,13 +25,20 @@ enum ENUM_EXHAUSTION_LEVEL
 };
 
 //+------------------------------------------------------------------+
-//| Area Boundary Source Type                                        |
+//| Area Boundary Source Type & Fallback Cascade Condition           |
 //+------------------------------------------------------------------+
 enum ENUM_BOUNDARY_SOURCE
 {
    BOUNDARY_ORGANIC_RBRDBD = 0, // From organic RBR (Demand) or DBD (Supply)
    BOUNDARY_HTF_SWING      = 1, // Fallback from HTF (M15/H1) structural swing
-   BOUNDARY_ATR_PROJECTED  = 2  // Fallback from Daily ATR projection
+   BOUNDARY_BASE_SPAN_RR1  = 2  // Fallback from 1.0x Base Span + Buffer (RR 1:1)
+};
+
+enum ENUM_CASCADE_CONDITION
+{
+   CASCADE_COND1_DUAL_ORGANIC = 1, // Condition 1: Both Floor (RBR) & Roof (DBD) organic valid
+   CASCADE_COND2_HTF_SWING    = 2, // Condition 2: One organic zone + HTF Swing counter-side
+   CASCADE_COND3_BASE_RR1     = 3  // Condition 3: One organic zone + 1.0x Base Span counter-side
 };
 
 //+------------------------------------------------------------------+
@@ -39,9 +46,10 @@ enum ENUM_BOUNDARY_SOURCE
 //+------------------------------------------------------------------+
 struct SLivingTradingArea
 {
-   bool                 isValid;           // True if area geometry is established
-   datetime             createdTime;       // Timestamp when area was established
-   int                  areaId;            // Incremental sequence ID
+   bool                    isValid;           // True if area geometry is established
+   datetime                createdTime;       // Timestamp when area was established
+   int                     areaId;            // Incremental sequence ID
+   ENUM_CASCADE_CONDITION cascadeCondition; // Active Condition (1, 2, or 3)
 
    // Floor Geometries (Bottom / Demand Side)
    ENUM_BOUNDARY_SOURCE floorSource;       // Organic RBR, HTF Swing, or ATR
@@ -96,6 +104,7 @@ struct SLivingTradingArea
       isValid               = false;
       createdTime           = 0;
       areaId                = 0;
+      cascadeCondition      = CASCADE_COND1_DUAL_ORGANIC;
 
       floorSource           = BOUNDARY_ORGANIC_RBRDBD;
       floorBaseStart        = 0;
@@ -196,16 +205,31 @@ public:
       double midPrice = (currentBid + currentAsk) * 0.5;
       if(midPrice <= 0.0) return false;
 
-      // 1. Check if structure shifted:
-      // Keep area stable while price is inside current corridor. Only shift if:
-      // - Price breaks outside current Floor/Roof corridor, OR
-      // - Active area has reached Hard SL or full exhaustion.
+      // 1. Check if structure shifted or upgrade to Condition 1 is available:
+      // Keep area stable while price is inside current corridor.
+      // Rebuild if:
+      // - Price breaks outside current corridor, OR
+      // - Active area reached Hard SL or 100% full exhaustion, OR
+      // - Area is currently on Fallback (Cond 2 or Cond 3) AND a newly formed RBR/DBD now allows Condition 1!
       bool structureShifted = false;
       if(m_activeArea.isValid)
       {
          if(midPrice < m_activeArea.floorBoundary || midPrice > m_activeArea.roofBoundary)
          {
             structureShifted = true;
+         }
+         else if(m_activeArea.cascadeCondition > CASCADE_COND1_DUAL_ORGANIC)
+         {
+            // Currently on fallback. Check if an organic counter-zone has just formed!
+            SRBRDBDArea checkFloor, checkRoof;
+            checkFloor.Init(); checkRoof.Init();
+            bool hasOrganicFloor = rbrdbdEngine.FindNearestFloor(m_baseTF, midPrice, checkFloor);
+            bool hasOrganicRoof  = rbrdbdEngine.FindNearestRoof(m_baseTF, midPrice, checkRoof);
+            if(hasOrganicFloor && hasOrganicRoof)
+            {
+               // Condition 1 is now fulfilled! Immediately upgrade!
+               structureShifted = true;
+            }
          }
       }
 
@@ -385,7 +409,10 @@ public:
 
 private:
    //+------------------------------------------------------------------+
-   //| Build New TradingArea from RBR/DBD engine + Fallbacks            |
+   //| Build New TradingArea with 3-Condition Cascade Hierarchy         |
+   //| Condition 1: Both Floor (RBR) & Roof (DBD) organic exist         |
+   //| Condition 2: One organic zone + HTF Swing (M15/H1) counter-side  |
+   //| Condition 3: One organic zone + 1.0x Base Span + Buffer (RR 1:1) |
    //+------------------------------------------------------------------+
    bool BuildNewTradingArea(const string symbol, CRBRDBDV1 &rbrdbdEngine, const double midPrice)
    {
@@ -403,17 +430,24 @@ private:
          return false;
       }
 
-      // Daily ATR reference for projection fallbacks
-      double dailyATR = GetDailyATR(symbol, 14);
-      if(dailyATR <= 0.0) dailyATR = 2500.0 * _Point; // Safe fallback ($25.00 on Gold)
-
       SLivingTradingArea newArea;
       newArea.Init();
       m_areaCounter++;
       newArea.areaId      = m_areaCounter;
       newArea.createdTime = TimeCurrent();
 
-      // --- 1. RESOLVE FLOOR GEOMETRY ---
+      // Determine Cascade Condition:
+      if(hasFloor && hasRoof)
+      {
+         newArea.cascadeCondition = CASCADE_COND1_DUAL_ORGANIC;
+      }
+      else
+      {
+         // One side is missing. We will test Condition 2 (HTF Swing) vs Condition 3 (Base RR 1:1)
+         newArea.cascadeCondition = CASCADE_COND2_HTF_SWING;
+      }
+
+      // --- 1. POPULATE ORGANIC SIDES ---
       if(hasFloor)
       {
          newArea.hasOrganicFloor = true;
@@ -428,42 +462,7 @@ private:
          newArea.floorScore      = floorZone.totalScore;
          newArea.floorDNA        = floorZone.dnaCode;
       }
-      else
-      {
-         // Fallback Floor: Try HTF Swing Low or ATR Projection
-         double htfSwingLow = FindHTFSwingLow(symbol, midPrice);
-         if(htfSwingLow > 0.0 && htfSwingLow < midPrice)
-         {
-            newArea.hasOrganicFloor = false;
-            newArea.floorSource     = BOUNDARY_HTF_SWING;
-            newArea.floorBaseStart  = 0;
-            newArea.floorLegOutTime = TimeCurrent();
-            newArea.floorBoundary   = htfSwingLow - (50.0 * _Point);
-            newArea.floorDistal     = htfSwingLow;
-            newArea.floorProximal   = htfSwingLow;
-            newArea.floorPeriod     = PERIOD_M15;
-            newArea.floorStrength   = 0;
-            newArea.floorScore      = 0;
-            newArea.floorDNA        = "----";
-         }
-         else
-         {
-            // ATR Projection downwards
-            newArea.hasOrganicFloor = false;
-            newArea.floorSource     = BOUNDARY_ATR_PROJECTED;
-            newArea.floorBaseStart  = 0;
-            newArea.floorLegOutTime = TimeCurrent();
-            newArea.floorBoundary   = NormalizeDouble(midPrice - (1.0 * dailyATR), _Digits);
-            newArea.floorDistal     = newArea.floorBoundary;
-            newArea.floorProximal   = newArea.floorBoundary;
-            newArea.floorPeriod     = PERIOD_D1;
-            newArea.floorStrength   = 0;
-            newArea.floorScore      = 0;
-            newArea.floorDNA        = "----";
-         }
-      }
 
-      // --- 2. RESOLVE ROOF GEOMETRY ---
       if(hasRoof)
       {
          newArea.hasOrganicRoof  = true;
@@ -478,60 +477,127 @@ private:
          newArea.roofScore       = roofZone.totalScore;
          newArea.roofDNA         = roofZone.dnaCode;
       }
-      else
+
+      // --- 2. RESOLVE MISSING SIDE (CASCADE 2 -> CASCADE 3) ---
+      if(!hasFloor) // Missing Floor (Only Roof DBD exists)
       {
-         // Fallback Roof: Try HTF Swing High or ATR Projection
-         double htfSwingHigh = FindHTFSwingHigh(symbol, midPrice);
-         if(htfSwingHigh > 0.0 && htfSwingHigh > midPrice)
+         newArea.hasOrganicFloor = false;
+         newArea.floorBaseStart  = 0;
+         newArea.floorLegOutTime = TimeCurrent();
+         newArea.floorPeriod     = PERIOD_M15;
+         newArea.floorStrength   = 0;
+         newArea.floorScore      = 0;
+         newArea.floorDNA        = "----";
+
+         // Condition 2: Try HTF Swing Low
+         double htfSwingLow = FindHTFSwingLow(symbol, midPrice);
+         if(htfSwingLow > 0.0 && htfSwingLow < midPrice)
          {
-            newArea.hasOrganicRoof  = false;
-            newArea.roofSource      = BOUNDARY_HTF_SWING;
-            newArea.roofBaseStart   = 0;
-            newArea.roofLegOutTime  = TimeCurrent();
-            newArea.roofBoundary    = htfSwingHigh + (50.0 * _Point);
-            newArea.roofDistal      = htfSwingHigh;
-            newArea.roofProximal    = htfSwingHigh;
-            newArea.roofPeriod      = PERIOD_M15;
-            newArea.roofStrength    = 0;
-            newArea.roofScore       = 0;
-            newArea.roofDNA         = "----";
+            newArea.cascadeCondition = CASCADE_COND2_HTF_SWING;
+            newArea.floorSource      = BOUNDARY_HTF_SWING;
+            newArea.floorBoundary    = htfSwingLow;
+            newArea.floorDistal      = htfSwingLow;
+            newArea.floorProximal    = htfSwingLow;
          }
          else
          {
-            // ATR Projection upwards
-            newArea.hasOrganicRoof  = false;
-            newArea.roofSource      = BOUNDARY_ATR_PROJECTED;
-            newArea.roofBaseStart   = 0;
-            newArea.roofLegOutTime  = TimeCurrent();
-            newArea.roofBoundary    = NormalizeDouble(midPrice + (1.0 * dailyATR), _Digits);
-            newArea.roofDistal      = newArea.roofBoundary;
-            newArea.roofProximal   = newArea.roofBoundary;
-            newArea.roofPeriod     = PERIOD_D1;
-            newArea.roofStrength   = 0;
-            newArea.roofScore      = 0;
-            newArea.roofDNA        = "----";
+            // Condition 3: Fallback 1.0x Base Span + Buffer of Roof DBD (RR 1:1)
+            double roofSpan = MathAbs(roofZone.finalBoundary - roofZone.proximal);
+            if(roofSpan <= (5.0 * _Point)) roofSpan = 50.0 * _Point;
+
+            newArea.cascadeCondition = CASCADE_COND3_BASE_RR1;
+            newArea.floorSource      = BOUNDARY_BASE_SPAN_RR1;
+            newArea.floorBoundary    = NormalizeDouble(roofZone.proximal - (1.0 * roofSpan), _Digits);
+            newArea.floorDistal      = newArea.floorBoundary;
+            newArea.floorProximal    = newArea.floorBoundary;
+         }
+      }
+
+      if(!hasRoof) // Missing Roof (Only Floor RBR exists)
+      {
+         newArea.hasOrganicRoof  = false;
+         newArea.roofBaseStart   = 0;
+         newArea.roofLegOutTime  = TimeCurrent();
+         newArea.roofPeriod      = PERIOD_M15;
+         newArea.roofStrength    = 0;
+         newArea.roofScore       = 0;
+         newArea.roofDNA         = "----";
+
+         // Condition 2: Try HTF Swing High
+         double htfSwingHigh = FindHTFSwingHigh(symbol, midPrice);
+         if(htfSwingHigh > 0.0 && htfSwingHigh > midPrice)
+         {
+            newArea.cascadeCondition = CASCADE_COND2_HTF_SWING;
+            newArea.roofSource       = BOUNDARY_HTF_SWING;
+            newArea.roofBoundary     = htfSwingHigh;
+            newArea.roofDistal       = htfSwingHigh;
+            newArea.roofProximal     = htfSwingHigh;
+         }
+         else
+         {
+            // Condition 3: Fallback 1.0x Base Span + Buffer of Floor RBR (RR 1:1)
+            double floorSpan = MathAbs(floorZone.proximal - floorZone.finalBoundary);
+            if(floorSpan <= (5.0 * _Point)) floorSpan = 50.0 * _Point;
+
+            newArea.cascadeCondition = CASCADE_COND3_BASE_RR1;
+            newArea.roofSource       = BOUNDARY_BASE_SPAN_RR1;
+            newArea.roofBoundary     = NormalizeDouble(floorZone.proximal + (1.0 * floorSpan), _Digits);
+            newArea.roofDistal       = newArea.roofBoundary;
+            newArea.roofProximal     = newArea.roofBoundary;
          }
       }
 
       // --- 3. COMPUTE GEOMETRY & LEVEL VALUES ---
       if(newArea.roofBoundary <= newArea.floorBoundary)
       {
-         // Overlapping anomaly guard: ensure minimal separation
-         newArea.roofBoundary = NormalizeDouble(newArea.floorBoundary + (100.0 * _Point), _Digits);
+         // Guard against abnormal inversions
+         newArea.roofBoundary = NormalizeDouble(newArea.floorBoundary + (50.0 * _Point), _Digits);
       }
 
-      newArea.totalRange    = NormalizeDouble(newArea.roofBoundary - newArea.floorBoundary, _Digits);
-      newArea.hardTP50      = NormalizeDouble(newArea.floorBoundary + (0.50 * newArea.totalRange), _Digits);
+      newArea.totalRange = NormalizeDouble(newArea.roofBoundary - newArea.floorBoundary, _Digits);
 
-      // Buy Area (0% to 25%)
-      newArea.buyZoneStart  = newArea.floorBoundary;
-      newArea.buyZoneEnd    = NormalizeDouble(newArea.floorBoundary + (0.25 * newArea.totalRange), _Digits);
-      newArea.floorHardSL   = NormalizeDouble(newArea.floorBoundary - (0.30 * newArea.totalRange), _Digits);
+      if(newArea.cascadeCondition == CASCADE_COND1_DUAL_ORGANIC || newArea.cascadeCondition == CASCADE_COND2_HTF_SWING)
+      {
+         // Equilibrium 50% between boundaries
+         newArea.hardTP50 = NormalizeDouble(newArea.floorBoundary + (0.50 * newArea.totalRange), _Digits);
+      }
+      else // CASCADE_COND3_BASE_RR1
+      {
+         // Target TP is exactly the synthetic boundary (RR 1:1)
+         if(hasFloor)
+            newArea.hardTP50 = newArea.roofBoundary;
+         else
+            newArea.hardTP50 = newArea.floorBoundary;
+      }
 
-      // Sell Area (75% to 100%)
-      newArea.sellZoneStart = NormalizeDouble(newArea.roofBoundary - (0.25 * newArea.totalRange), _Digits);
-      newArea.sellZoneEnd   = newArea.roofBoundary;
-      newArea.roofHardSL    = NormalizeDouble(newArea.roofBoundary + (0.30 * newArea.totalRange), _Digits);
+      // Base Pocket Transaction Boundaries:
+      // For Floor: If organic, buy zone is strictly its Base (from finalBoundary to proximal)
+      if(hasFloor)
+      {
+         newArea.buyZoneStart = floorZone.finalBoundary;
+         newArea.buyZoneEnd   = floorZone.proximal;
+         newArea.floorHardSL  = floorZone.finalBoundary; // Hard SL at Distal - Buffer
+      }
+      else
+      {
+         newArea.buyZoneStart = newArea.floorBoundary;
+         newArea.buyZoneEnd   = NormalizeDouble(newArea.floorBoundary + (0.25 * newArea.totalRange), _Digits);
+         newArea.floorHardSL  = newArea.floorBoundary;
+      }
+
+      // For Roof: If organic, sell zone is strictly its Base (from proximal to finalBoundary)
+      if(hasRoof)
+      {
+         newArea.sellZoneStart = roofZone.proximal;
+         newArea.sellZoneEnd   = roofZone.finalBoundary;
+         newArea.roofHardSL    = roofZone.finalBoundary; // Hard SL at Distal + Buffer
+      }
+      else
+      {
+         newArea.sellZoneStart = NormalizeDouble(newArea.roofBoundary - (0.25 * newArea.totalRange), _Digits);
+         newArea.sellZoneEnd   = newArea.roofBoundary;
+         newArea.roofHardSL    = newArea.roofBoundary;
+      }
 
       newArea.isValid = true;
       m_activeArea    = newArea;
@@ -674,7 +740,9 @@ private:
 
       // TP 50 Tag
       string tpTag = m_objPrefix + "TP50_Tag";
-      string tpText = StringFormat("── Hard TP 50%%: %.2f (Equilibrium)", m_activeArea.hardTP50);
+      string condStr = (m_activeArea.cascadeCondition == CASCADE_COND1_DUAL_ORGANIC) ? "Cond1: Dual-Organic" :
+                       (m_activeArea.cascadeCondition == CASCADE_COND2_HTF_SWING)    ? "Cond2: HTF Swing" : "Cond3: Base RR1";
+      string tpText = StringFormat("── Hard TP 50%%: %.2f [%s]", m_activeArea.hardTP50, condStr);
       if(ObjectFind(0, tpTag) < 0)
          ObjectCreate(0, tpTag, OBJ_TEXT, 0, tStart, m_activeArea.hardTP50);
       else
