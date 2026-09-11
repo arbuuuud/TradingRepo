@@ -26,6 +26,7 @@ private:
    string               m_symbol;
    ulong                m_orderDeviation;
    datetime             m_lastSyncTime;      // Debounce timer: prevents multiple requests per second
+   int                  m_lastTrackedAreaId; // Tracks active area ID to detect area changes
 
 public:
    CProactiveLimitPlacer() : m_magicNumber(888222),
@@ -33,7 +34,8 @@ public:
                              m_fixedLotSize(0.01),
                              m_symbol(""),
                              m_orderDeviation(10),
-                             m_lastSyncTime(0)
+                             m_lastSyncTime(0),
+                             m_lastTrackedAreaId(0)
    {
    }
 
@@ -106,6 +108,15 @@ public:
    {
       if(!area.isValid) return;
 
+      // Check if TradingArea has changed (different areaId or corridor migrated)
+      bool areaChanged = (m_lastTrackedAreaId != area.areaId);
+      if(areaChanged)
+      {
+         m_lastTrackedAreaId = area.areaId;
+         // Synchronize / adjust SL & TP for all existing open positions and pending orders
+         SyncAreaTransitionRisk(area, currentBid, currentAsk);
+      }
+
       // 1. Purge any pending orders that are OUTSIDE the active TradingArea bounds
       PurgeStaleOrders(area);
 
@@ -118,6 +129,124 @@ public:
 
       // 4. Synchronize Sell Limit Grid on Roof Side
       SyncSellLimitGrid(area, currentBid);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Synchronize SL & TP on TradingArea Change:                       |
+   //| Adjust open positions & limit orders to new area's Hard SL / TP  |
+   //| Auto-close if price already breached new SL or passed new TP     |
+   //+------------------------------------------------------------------+
+   void SyncAreaTransitionRisk(const SLivingTradingArea &area,
+                               const double currentBid,
+                               const double currentAsk)
+   {
+      // 1. Synchronize & Protect Open Positions
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket <= 0) continue;
+
+         if(PositionGetString(POSITION_SYMBOL) == m_symbol &&
+            PositionGetInteger(POSITION_MAGIC) == (long)m_magicNumber)
+         {
+            ENUM_POSITION_TYPE pType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            double posOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+
+            if(pType == POSITION_TYPE_BUY)
+            {
+               double newSL = area.floorHardSL;
+               double newTP = area.hardTP50;
+
+               // Guard: If current Bid is already below new SL -> Auto close immediately
+               if(currentBid <= newSL)
+               {
+                  PrintFormat("[AreaTransition] Auto-closing Buy position #%I64u: Bid %.2f already below new Floor SL %.2f",
+                              ticket, currentBid, newSL);
+                  m_trade.PositionClose(ticket);
+                  continue;
+               }
+
+               // Guard: If current Bid has already reached or passed new TP -> Auto close with profit
+               if(currentBid >= newTP)
+               {
+                  PrintFormat("[AreaTransition] Auto-closing Buy position #%I64u: Bid %.2f already reached/passed new TP %.2f",
+                              ticket, currentBid, newTP);
+                  m_trade.PositionClose(ticket);
+                  continue;
+               }
+
+               // Modify position to adopt new SL & TP
+               m_trade.PositionModify(ticket, newSL, newTP);
+            }
+            else if(pType == POSITION_TYPE_SELL)
+            {
+               double newSL = area.roofHardSL;
+               double newTP = area.hardTP50;
+
+               // Guard: If current Ask is already above new SL -> Auto close immediately
+               if(currentAsk >= newSL)
+               {
+                  PrintFormat("[AreaTransition] Auto-closing Sell position #%I64u: Ask %.2f already above new Roof SL %.2f",
+                              ticket, currentAsk, newSL);
+                  m_trade.PositionClose(ticket);
+                  continue;
+               }
+
+               // Guard: If current Ask has already reached or passed new TP -> Auto close with profit
+               if(currentAsk <= newTP)
+               {
+                  PrintFormat("[AreaTransition] Auto-closing Sell position #%I64u: Ask %.2f already reached/passed new TP %.2f",
+                              ticket, currentAsk, newTP);
+                  m_trade.PositionClose(ticket);
+                  continue;
+               }
+
+               // Modify position to adopt new SL & TP
+               m_trade.PositionModify(ticket, newSL, newTP);
+            }
+         }
+      }
+
+      // 2. Synchronize Remaining Valid Pending Orders
+      for(int j = OrdersTotal() - 1; j >= 0; j--)
+      {
+         ulong ticket = OrderGetTicket(j);
+         if(ticket <= 0) continue;
+
+         if(OrderGetString(ORDER_SYMBOL) == m_symbol &&
+            OrderGetInteger(ORDER_MAGIC) == (long)m_magicNumber)
+         {
+            ENUM_ORDER_TYPE oType = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+            double oPrice = OrderGetDouble(ORDER_PRICE_OPEN);
+
+            if(oType == ORDER_TYPE_BUY_LIMIT)
+            {
+               double newSL = area.floorHardSL;
+               double newTP = area.hardTP50;
+
+               // If order price is below new SL or above new TP, order is invalid -> Delete
+               if(oPrice <= newSL || oPrice >= newTP)
+               {
+                  m_trade.OrderDelete(ticket);
+                  continue;
+               }
+               m_trade.OrderModify(ticket, oPrice, newSL, newTP, ORDER_TIME_GTC, 0);
+            }
+            else if(oType == ORDER_TYPE_SELL_LIMIT)
+            {
+               double newSL = area.roofHardSL;
+               double newTP = area.hardTP50;
+
+               // If order price is above new SL or below new TP, order is invalid -> Delete
+               if(oPrice >= newSL || oPrice <= newTP)
+               {
+                  m_trade.OrderDelete(ticket);
+                  continue;
+               }
+               m_trade.OrderModify(ticket, oPrice, newSL, newTP, ORDER_TIME_GTC, 0);
+            }
+         }
+      }
    }
 
    //+------------------------------------------------------------------+
