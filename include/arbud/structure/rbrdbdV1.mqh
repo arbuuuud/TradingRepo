@@ -79,6 +79,12 @@ struct SRBRDBDArea
    double            htfSwingDistPoints;// Distance in points from base to swing level
    int               scorePhase2_4B;   // +1 Point if passHTFSwing is true, 0 otherwise
 
+   // Phase 2.5: Liquidity Sweep & Big Figure Confluence ($xx00, $xx50, $xx10)
+   bool              passLiquiditySweep;// True if base/leg-in sweeps big figure or prominent swing
+   double            sweepLevel;       // Level of swept big figure or swing
+   string            sweepTypeDesc;    // Description (e.g. "$50 Major", "$10 Medium", "EQL Sweep")
+   int               scorePhase2_5;    // +1 Point if passLiquiditySweep is true, 0 otherwise
+
    int               totalScore;       // Phase 2 total score accumulator (0 to 5)
 
    void Init()
@@ -132,6 +138,11 @@ struct SRBRDBDArea
       htfSwingTime      = 0;
       htfSwingDistPoints= 0.0;
       scorePhase2_4B    = 0;
+
+      passLiquiditySweep= false;
+      sweepLevel        = 0.0;
+      sweepTypeDesc     = "";
+      scorePhase2_5     = 0;
 
       totalScore        = 0;
    }
@@ -196,13 +207,15 @@ private:
    bool                 m_enablePhase2_3; // Origin TF Direct Attached FVG
    bool                 m_enablePhase2_4A;// HTF RBR/DBD Parent Zone Reaction
    bool                 m_enablePhase2_4B;// HTF Swing High/Low Structure Reaction
+   bool                 m_enablePhase2_5; // Liquidity Sweep & Big Figure
    double               m_minFVGGapPoints;// Minimum FVG gap in points (default 50 = $0.50 on Gold)
 
 public:
    CRBRDBDV1() : m_totalTFs(0), m_objPrefix("RBRDBD_"),
                  m_enablePhase2_1(true), m_enablePhase2_2(true),
                  m_enablePhase2_3(true), m_enablePhase2_4A(true),
-                 m_enablePhase2_4B(true), m_minFVGGapPoints(50.0)
+                 m_enablePhase2_4B(true), m_enablePhase2_5(true),
+                 m_minFVGGapPoints(50.0)
    {
       ArrayResize(m_tfList, 0);
    }
@@ -215,6 +228,7 @@ public:
                           const bool enablePhase2_3 = true,
                           const bool enablePhase2_4A = true,
                           const bool enablePhase2_4B = true,
+                          const bool enablePhase2_5 = true,
                           const double minFVGGapPoints = 50.0)
    {
       m_enablePhase2_1   = enablePhase2_1;
@@ -222,6 +236,7 @@ public:
       m_enablePhase2_3   = enablePhase2_3;
       m_enablePhase2_4A  = enablePhase2_4A;
       m_enablePhase2_4B  = enablePhase2_4B;
+      m_enablePhase2_5   = enablePhase2_5;
       m_minFVGGapPoints  = minFVGGapPoints;
    }
 
@@ -230,6 +245,7 @@ public:
    bool GetPhase2_3Enabled()  const { return m_enablePhase2_3; }
    bool GetPhase2_4AEnabled() const { return m_enablePhase2_4A; }
    bool GetPhase2_4BEnabled() const { return m_enablePhase2_4B; }
+   bool GetPhase2_5Enabled()  const { return m_enablePhase2_5; }
 
    ~CRBRDBDV1()
    {
@@ -356,7 +372,8 @@ public:
                                           data.areas[a].scorePhase2_2 +
                                           data.areas[a].scorePhase2_3 +
                                           data.areas[a].scorePhase2_4A +
-                                          data.areas[a].scorePhase2_4B;
+                                          data.areas[a].scorePhase2_4B +
+                                          data.areas[a].scorePhase2_5;
             }
          }
       }
@@ -462,6 +479,7 @@ public:
                ObjectDelete(0, m_tfList[i].areas[a].objName + "_fvg");
                ObjectDelete(0, m_tfList[i].areas[a].objName + "_htfsw");
                ObjectDelete(0, m_tfList[i].areas[a].objName + "_htfsw_tag");
+               ObjectDelete(0, m_tfList[i].areas[a].objName + "_swp");
 
                // Shift array to remove element
                int total = ArraySize(m_tfList[i].areas);
@@ -883,12 +901,22 @@ private:
          data.areas[size].scorePhase2_4B = 0;
       }
 
+      // --- PHASE 2.5: Liquidity Sweep & Big Figure Confluence ($xx00, $xx50, $xx10) ---
+      if(m_enablePhase2_5)
+         EvaluatePhase2_5_LiquiditySweep(symbol, data.areas[size]);
+      else
+      {
+         data.areas[size].passLiquiditySweep = false;
+         data.areas[size].scorePhase2_5      = 0;
+      }
+
       // Phase 2 Total Score Accumulator (Sums active modules)
       data.areas[size].totalScore = data.areas[size].scorePhase2_1 +
                                     data.areas[size].scorePhase2_2 +
                                     data.areas[size].scorePhase2_3 +
                                     data.areas[size].scorePhase2_4A +
-                                    data.areas[size].scorePhase2_4B;
+                                    data.areas[size].scorePhase2_4B +
+                                    data.areas[size].scorePhase2_5;
 
       string lbl = (type == RBRDBD_RBR) ? "RBR" : "DBD";
       data.areas[size].objName = m_objPrefix + EnumToString(finalPeriod) + "_" + lbl + "_" + TimeToString(bStart, TIME_DATE|TIME_MINUTES);
@@ -1483,6 +1511,150 @@ private:
    }
 
    //+------------------------------------------------------------------+
+   //| Phase 2.5 Evaluator: Liquidity Sweep & Big Figure Confluence      |
+   //| Validates if Base or Leg-In swept a major/medium psychological   |
+   //| round number ($50, $10) or local swing high/low (EQH/EQL)        |
+   //+------------------------------------------------------------------+
+   void EvaluatePhase2_5_LiquiditySweep(const string symbol, SRBRDBDArea &area)
+   {
+      area.passLiquiditySweep = false;
+      area.sweepLevel         = 0.0;
+      area.sweepTypeDesc      = "";
+      area.scorePhase2_5      = 0;
+
+      ENUM_TIMEFRAMES tf = area.period;
+      if(tf <= 0) tf = PERIOD_CURRENT;
+
+      int baseStartBar = iBarShift(symbol, tf, area.baseStart, false);
+      int baseEndBar   = iBarShift(symbol, tf, area.baseEnd, false);
+      if(baseStartBar < 0 || baseEndBar < 0) return;
+
+      // Include 1 bar before base (Leg-In candle) up to baseEndBar
+      int oldestBar = MathMax(baseStartBar, baseEndBar) + 1;
+      int newestBar = MathMin(baseStartBar, baseEndBar);
+      int totalBars = oldestBar - newestBar + 1;
+
+      MqlRates rates[];
+      ArraySetAsSeries(rates, true);
+      if(CopyRates(symbol, tf, newestBar, totalBars, rates) < totalBars) return;
+
+      // 1. Check Big Figure Sweeps ($50.0 Major and $10.0 Medium on Gold)
+      double zoneLow  = MathMin(area.proximal, area.distal);
+      double zoneHigh = MathMax(area.proximal, area.distal);
+
+      double figures[2] = { 50.0, 10.0 }; // Test $50 major first, then $10 medium
+
+      for(int f = 0; f < 2; f++)
+      {
+         double figStep = figures[f];
+         if(area.type == RBRDBD_RBR)
+         {
+            // For Demand: Round numbers near the lower boundary of the base
+            double roundFloor = MathFloor(zoneLow / figStep) * figStep;
+            double roundCeil  = MathCeil(zoneLow / figStep) * figStep;
+            double testFigs[2] = { roundFloor, roundCeil };
+
+            for(int r = 0; r < 2; r++)
+            {
+               double figPrice = testFigs[r];
+               // Check if any candle pierced below figPrice with wick and closed above figPrice
+               for(int k = 0; k < totalBars; k++)
+               {
+                  if(rates[k].low < figPrice && rates[k].close > figPrice)
+                  {
+                     area.passLiquiditySweep = true;
+                     area.sweepLevel         = figPrice;
+                     area.sweepTypeDesc      = (figStep >= 50.0) ? "$50 Major" : "$10 Medium";
+                     area.scorePhase2_5      = 1;
+                     return; // Passed with Big Figure sweep!
+                  }
+               }
+            }
+         }
+         else if(area.type == RBRDBD_DBD)
+         {
+            // For Supply: Round numbers near the upper boundary of the base
+            double roundFloor = MathFloor(zoneHigh / figStep) * figStep;
+            double roundCeil  = MathCeil(zoneHigh / figStep) * figStep;
+            double testFigs[2] = { roundFloor, roundCeil };
+
+            for(int r = 0; r < 2; r++)
+            {
+               double figPrice = testFigs[r];
+               // Check if any candle pierced above figPrice with wick and closed below figPrice
+               for(int k = 0; k < totalBars; k++)
+               {
+                  if(rates[k].high > figPrice && rates[k].close < figPrice)
+                  {
+                     area.passLiquiditySweep = true;
+                     area.sweepLevel         = figPrice;
+                     area.sweepTypeDesc      = (figStep >= 50.0) ? "$50 Major" : "$10 Medium";
+                     area.scorePhase2_5      = 1;
+                     return; // Passed with Big Figure sweep!
+                  }
+               }
+            }
+         }
+      }
+
+      // 2. Check Local Equal Highs / Lows (EQH / EQL) Sweep in recent 20 bars prior to base
+      int priorStart = oldestBar + 1;
+      int priorCount = 20;
+      MqlRates priorRates[];
+      ArraySetAsSeries(priorRates, true);
+      if(CopyRates(symbol, tf, priorStart, priorCount, priorRates) >= 5)
+      {
+         int pSize = ArraySize(priorRates);
+         if(area.type == RBRDBD_RBR)
+         {
+            // Look for a prominent prior swing low that the base swept
+            for(int p = 1; p < pSize - 1; p++)
+            {
+               if(priorRates[p].low <= priorRates[p - 1].low && priorRates[p].low <= priorRates[p + 1].low)
+               {
+                  double priorLow = priorRates[p].low;
+                  // Base sweeps priorLow: base Low < priorLow but base closes above priorLow
+                  for(int k = 0; k < totalBars; k++)
+                  {
+                     if(rates[k].low < priorLow && rates[k].close > priorLow)
+                     {
+                        area.passLiquiditySweep = true;
+                        area.sweepLevel         = priorLow;
+                        area.sweepTypeDesc      = "EQL Sweep";
+                        area.scorePhase2_5      = 1;
+                        return;
+                     }
+                  }
+               }
+            }
+         }
+         else if(area.type == RBRDBD_DBD)
+         {
+            // Look for a prominent prior swing high that the base swept
+            for(int p = 1; p < pSize - 1; p++)
+            {
+               if(priorRates[p].high >= priorRates[p - 1].high && priorRates[p].high >= priorRates[p + 1].high)
+               {
+                  double priorHigh = priorRates[p].high;
+                  // Base sweeps priorHigh: base High > priorHigh but base closes below priorHigh
+                  for(int k = 0; k < totalBars; k++)
+                  {
+                     if(rates[k].high > priorHigh && rates[k].close < priorHigh)
+                     {
+                        area.passLiquiditySweep = true;
+                        area.sweepLevel         = priorHigh;
+                        area.sweepTypeDesc      = "EQH Sweep";
+                        area.scorePhase2_5      = 1;
+                        return;
+                     }
+                  }
+               }
+            }
+         }
+      }
+   }
+
+   //+------------------------------------------------------------------+
    //| Recursive MTF Base Consolidation Scanner                         |
    //| If base candles are excessive in M1 (> maxBaseCandles),          |
    //| climb TF ladder to check if it compacts into 1-3 boring candles   |
@@ -1701,7 +1873,15 @@ private:
 
          // Phase 2 Quality Score Info (Adaptive to Active Switches)
          string scoreStr = "";
-         if(m_enablePhase2_4B && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A)
+         if(m_enablePhase2_5 && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A && !m_enablePhase2_4B)
+         {
+            // Pure Phase 2.5 Test Mode (Isolated Liquidity Sweep test)
+            if(area.scorePhase2_5 > 0)
+               scoreStr = StringFormat("Swp:%.0f(%s|+1)", area.sweepLevel, area.sweepTypeDesc);
+            else
+               scoreStr = "no-Swp (0pt)";
+         }
+         else if(m_enablePhase2_4B && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A && !m_enablePhase2_5)
          {
             // Pure Phase 2.4B Test Mode (Isolated HTF Swing High/Low Reaction)
             if(area.scorePhase2_4B > 0)
@@ -1709,7 +1889,7 @@ private:
             else
                scoreStr = "no-Sw (0pt)";
          }
-         else if(m_enablePhase2_4A && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4B)
+         else if(m_enablePhase2_4A && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4B && !m_enablePhase2_5)
          {
             // Pure Phase 2.4A Test Mode (Isolated HTF RBR/DBD Parent Reaction)
             if(area.scorePhase2_4A > 0)
@@ -1717,7 +1897,7 @@ private:
             else
                scoreStr = "no-HTF (0pt)";
          }
-         else if(m_enablePhase2_3 && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_4A && !m_enablePhase2_4B)
+         else if(m_enablePhase2_3 && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_4A && !m_enablePhase2_4B && !m_enablePhase2_5)
          {
             // Pure Phase 2.3 Test Mode (Isolated FVG test)
             if(area.scorePhase2_3 > 0)
@@ -1725,7 +1905,7 @@ private:
             else
                scoreStr = "no-FVG (0pt)";
          }
-         else if(m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A && !m_enablePhase2_4B)
+         else if(m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A && !m_enablePhase2_4B && !m_enablePhase2_5)
          {
             // Pure Phase 2.1 Test Mode
             if(area.scorePhase2_1 > 0)
@@ -1733,7 +1913,7 @@ private:
             else
                scoreStr = "no-Tight (0pt)";
          }
-         else if(!m_enablePhase2_1 && m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A && !m_enablePhase2_4B)
+         else if(!m_enablePhase2_1 && m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A && !m_enablePhase2_4B && !m_enablePhase2_5)
          {
             // Pure Phase 2.2 Test Mode (Isolated BOS test)
             if(area.scorePhase2_2 > 0)
@@ -1755,6 +1935,8 @@ private:
                qInfo += "H:" + GetTFShortName(area.htfZoneTF) + " ";
             if(area.scorePhase2_4B > 0)
                qInfo += "S:" + GetTFShortName(area.htfSwingTF) + " ";
+            if(area.scorePhase2_5 > 0)
+               qInfo += "Swp ";
 
             if(StringLen(qInfo) > 0)
                StringTrimRight(qInfo);
@@ -1929,6 +2111,34 @@ private:
                ObjectDelete(0, htfSwLineName);
             if(ObjectFind(0, htfSwTagName) >= 0)
                ObjectDelete(0, htfSwTagName);
+         }
+
+         // Draw / Update Liquidity Sweep Visual Reference Line (if Sweep passed and enabled)
+         string swpLineName = rectName + "_swp";
+         if(m_enablePhase2_5 && area.passLiquiditySweep && area.sweepLevel > 0.0)
+         {
+            datetime swpStart = area.baseStart - (PeriodSeconds(area.period) * 3);
+            datetime swpEnd   = area.legOutTime + (PeriodSeconds(area.period) * 3);
+
+            if(ObjectFind(0, swpLineName) < 0)
+            {
+               ObjectCreate(0, swpLineName, OBJ_TREND, 0, swpStart, area.sweepLevel, swpEnd, area.sweepLevel);
+            }
+            else
+            {
+               ObjectMove(0, swpLineName, 0, swpStart, area.sweepLevel);
+               ObjectMove(0, swpLineName, 1, swpEnd, area.sweepLevel);
+            }
+            ObjectSetInteger(0, swpLineName, OBJPROP_COLOR, clrDarkOrange);
+            ObjectSetInteger(0, swpLineName, OBJPROP_STYLE, STYLE_DASHDOTDOT);
+            ObjectSetInteger(0, swpLineName, OBJPROP_WIDTH, 1);
+            ObjectSetInteger(0, swpLineName, OBJPROP_RAY_RIGHT, false);
+            ObjectSetInteger(0, swpLineName, OBJPROP_BACK, true);
+         }
+         else
+         {
+            if(ObjectFind(0, swpLineName) >= 0)
+               ObjectDelete(0, swpLineName);
          }
       }
 
