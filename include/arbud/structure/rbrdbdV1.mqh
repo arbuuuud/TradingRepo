@@ -25,13 +25,17 @@ enum ENUM_RBRDBD_TYPE
 struct SRBRDBDArea
 {
    ENUM_RBRDBD_TYPE  type;             // RBR (Demand) or DBD (Supply)
+   ENUM_TIMEFRAMES   period;           // Origin timeframe (PERIOD_M1, PERIOD_M3, PERIOD_M5, etc.)
+   ENUM_TIMEFRAMES   detectedTF;       // Initial scanner timeframe (e.g. PERIOD_M1)
+   bool              isEscalated;      // True if escalated via MTF recursive scan
    datetime          baseStart;        // Time of first base candle
    datetime          baseEnd;          // Time of last base candle
    datetime          legOutTime;       // Time of Leg-Out breakout candle
    double            proximal;         // Entry boundary (High for RBR, Low for DBD)
    double            distal;           // Stop/Invalidation boundary (Low for RBR, High for DBD)
    double            zoneHeight;       // |Proximal - Distal|
-   int               baseCandleCount;  // 1 to N base candles count
+   int               baseCandleCount;  // Base candles count on zone timeframe
+   int               m1BaseCandleCount;// Base candles count in M1
    double            consumptionPct;   // 0.0% to 100.0% penetration
    bool              isInvalid;        // True if consumption >= 100.0% (fully mitigated)
    datetime          invalidTime;      // Bar time when 100% penetration occurred
@@ -39,18 +43,22 @@ struct SRBRDBDArea
 
    void Init()
    {
-      type            = RBRDBD_NONE;
-      baseStart       = 0;
-      baseEnd         = 0;
-      legOutTime      = 0;
-      proximal        = 0.0;
-      distal          = 0.0;
-      zoneHeight      = 0.0;
-      baseCandleCount = 0;
-      consumptionPct  = 0.0;
-      isInvalid       = false;
-      invalidTime     = 0;
-      objName         = "";
+      type              = RBRDBD_NONE;
+      period            = PERIOD_CURRENT;
+      detectedTF        = PERIOD_CURRENT;
+      isEscalated       = false;
+      baseStart         = 0;
+      baseEnd           = 0;
+      legOutTime        = 0;
+      proximal          = 0.0;
+      distal            = 0.0;
+      zoneHeight        = 0.0;
+      baseCandleCount   = 0;
+      m1BaseCandleCount = 0;
+      consumptionPct    = 0.0;
+      isInvalid         = false;
+      invalidTime       = 0;
+      objName           = "";
    }
 };
 
@@ -230,6 +238,89 @@ public:
    }
 
    //+------------------------------------------------------------------+
+   //| Dynamic Garbage Collection & Memory Management                   |
+   //| Removes zones that are 100% mitigated and far away, or expired   |
+   //+------------------------------------------------------------------+
+   int RunGarbageCollection(const string symbol,
+                            const double currentPrice,
+                            const int maxAgeBars = 1500,
+                            const double minDistanceMultiplier = 3.0)
+   {
+      int purgedCount = 0;
+      datetime currentTime = TimeCurrent();
+
+      for(int i = 0; i < m_totalTFs; i++)
+      {
+         int tfSec = PeriodSeconds(m_tfList[i].tf);
+         if(tfSec <= 0) tfSec = 60;
+         datetime maxAgeSeconds = (datetime)(maxAgeBars * tfSec);
+
+         int a = 0;
+         while(a < ArraySize(m_tfList[i].areas))
+         {
+            bool shouldPurge = false;
+
+            // 1. Condition A: Fully Mitigated (100%) and price has moved far away
+            if(m_tfList[i].areas[a].isInvalid)
+            {
+               double distToZone = 0.0;
+               double topEdge    = MathMax(m_tfList[i].areas[a].proximal, m_tfList[i].areas[a].distal);
+               double botEdge    = MathMin(m_tfList[i].areas[a].proximal, m_tfList[i].areas[a].distal);
+
+               if(currentPrice > topEdge)
+                  distToZone = currentPrice - topEdge;
+               else if(currentPrice < botEdge)
+                  distToZone = botEdge - currentPrice;
+
+               double purgeDistance = MathMax(m_tfList[i].areas[a].zoneHeight * minDistanceMultiplier, 50.0 * _Point);
+               if(distToZone >= purgeDistance)
+               {
+                  shouldPurge = true;
+               }
+            }
+
+            // 2. Condition B: Zone exceeds maximum memory age
+            if(!shouldPurge && m_tfList[i].areas[a].baseStart > 0)
+            {
+               if((currentTime - m_tfList[i].areas[a].baseStart) > maxAgeSeconds)
+               {
+                  shouldPurge = true;
+               }
+            }
+
+            // Execute purge if condition met
+            if(shouldPurge)
+            {
+               // Delete chart visual objects cleanly
+               ObjectDelete(0, m_tfList[i].areas[a].objName);
+               ObjectDelete(0, m_tfList[i].areas[a].objName + "_lbl");
+
+               // Shift array to remove element
+               int total = ArraySize(m_tfList[i].areas);
+               for(int k = a; k < total - 1; k++)
+               {
+                  m_tfList[i].areas[k] = m_tfList[i].areas[k + 1];
+               }
+               ArrayResize(m_tfList[i].areas, total - 1);
+               purgedCount++;
+               // do not increment 'a', inspect current index with new shifted element
+            }
+            else
+            {
+               a++;
+            }
+         }
+      }
+
+      if(purgedCount > 0)
+      {
+         ChartRedraw(0);
+      }
+
+      return purgedCount;
+   }
+
+   //+------------------------------------------------------------------+
    //| Get count of active/valid (unmitigated) areas                    |
    //+------------------------------------------------------------------+
    int GetValidAreasCount(const ENUM_TIMEFRAMES tf)
@@ -284,7 +375,7 @@ private:
       MqlRates rates[];
       ArraySetAsSeries(rates, true);
 
-      int copied = CopyRates(symbol, data.tf, 0, maxBars + 15, rates);
+      int copied = CopyRates(symbol, data.tf, 0, maxBars + 25, rates);
       if(copied < (data.maxBaseCandles + 5)) return;
 
       ArrayResize(data.areas, 0);
@@ -297,7 +388,7 @@ private:
       // index 'outIdx' represents the candidate Leg-Out candle
       for(int outIdx = copied - 3; outIdx >= 1; outIdx--)
       {
-         DetectPatternAtBar(rates, copied, outIdx, data);
+         DetectPatternAtBar(symbol, rates, copied, outIdx, data);
       }
 
       // Track consumption chronologically from zone formation up to Bar 1
@@ -330,17 +421,17 @@ private:
       MqlRates rates[];
       ArraySetAsSeries(rates, true);
 
-      int needed = data.maxBaseCandles + 5;
+      int needed = (data.tf == PERIOD_M1) ? 25 : (data.maxBaseCandles + 5);
       if(CopyRates(symbol, data.tf, 0, needed, rates) < needed) return;
 
       // Check if completed Bar 1 was the Leg-Out of a new RBR or DBD
-      DetectPatternAtBar(rates, needed, 1, data);
+      DetectPatternAtBar(symbol, rates, needed, 1, data);
    }
 
    //+------------------------------------------------------------------+
    //| Core Pattern Detection logic at candle index 'outIdx'            |
    //+------------------------------------------------------------------+
-   void DetectPatternAtBar(const MqlRates &rates[], const int totalRates, const int outIdx, STimeframeRBRDBDData &data)
+   void DetectPatternAtBar(const string symbol, const MqlRates &rates[], const int totalRates, const int outIdx, STimeframeRBRDBDData &data)
    {
       // 1. Evaluate Leg-Out Candle (Strong impulsive candle)
       double outBody  = MathAbs(rates[outIdx].close - rates[outIdx].open);
@@ -360,8 +451,11 @@ private:
          if(data.areas[a].legOutTime == rates[outIdx].time) return;
       }
 
-      // 2. Iterate base length from minBaseCandles to maxBaseCandles
-      for(int baseLen = data.minBaseCandles; baseLen <= data.maxBaseCandles; baseLen++)
+      // Max scan base: allow scanning up to 15 candles on M1 to enable recursive MTF escalation
+      int maxScanBase = (data.tf == PERIOD_M1) ? MathMax(data.maxBaseCandles, 15) : data.maxBaseCandles;
+
+      // 2. Iterate base length from minBaseCandles to maxScanBase
+      for(int baseLen = data.minBaseCandles; baseLen <= maxScanBase; baseLen++)
       {
          int baseStart = outIdx + 1;
          int baseEnd   = outIdx + baseLen;
@@ -412,17 +506,51 @@ private:
          // === PATTERN A: RBR (Bullish Leg-In + Base + Bullish Leg-Out breaking Base High) ===
          if(inBullish && outBullish && rates[outIdx].close > baseHigh)
          {
-            RegisterNewArea(data, RBRDBD_RBR, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
-                            baseHigh, baseLow, baseLen);
-            return;
+            if(baseLen <= data.maxBaseCandles)
+            {
+               // Standard Base within limits
+               RegisterNewArea(data, RBRDBD_RBR, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
+                               baseHigh, baseLow, baseLen, data.tf, false, baseLen);
+               return;
+            }
+            else if(data.tf == PERIOD_M1)
+            {
+               // Base > maxBaseCandles in M1: Attempt Recursive MTF Escalation to 1-3 HTF candles
+               ENUM_TIMEFRAMES htf;
+               int htfCount = 0;
+               if(TryEscalateBaseToHTF(symbol, RBRDBD_RBR, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
+                                       baseHigh, baseLow, baseLen, htf, htfCount))
+               {
+                  RegisterNewArea(data, RBRDBD_RBR, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
+                                  baseHigh, baseLow, htfCount, htf, true, baseLen);
+                  return;
+               }
+            }
          }
 
          // === PATTERN B: DBD (Bearish Leg-In + Base + Bearish Leg-Out breaking Base Low) ===
          if(inBearish && outBearish && rates[outIdx].close < baseLow)
          {
-            RegisterNewArea(data, RBRDBD_DBD, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
-                            baseLow, baseHigh, baseLen);
-            return;
+            if(baseLen <= data.maxBaseCandles)
+            {
+               // Standard Base within limits
+               RegisterNewArea(data, RBRDBD_DBD, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
+                               baseLow, baseHigh, baseLen, data.tf, false, baseLen);
+               return;
+            }
+            else if(data.tf == PERIOD_M1)
+            {
+               // Base > maxBaseCandles in M1: Attempt Recursive MTF Escalation to 1-3 HTF candles
+               ENUM_TIMEFRAMES htf;
+               int htfCount = 0;
+               if(TryEscalateBaseToHTF(symbol, RBRDBD_DBD, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
+                                       baseLow, baseHigh, baseLen, htf, htfCount))
+               {
+                  RegisterNewArea(data, RBRDBD_DBD, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
+                                  baseLow, baseHigh, htfCount, htf, true, baseLen);
+                  return;
+               }
+            }
          }
       }
    }
@@ -437,25 +565,103 @@ private:
                         const datetime lOutTime,
                         const double prox,
                         const double dist,
-                        const int baseCount)
+                        const int baseCount,
+                        const ENUM_TIMEFRAMES originTF = PERIOD_CURRENT,
+                        const bool isEscalated = false,
+                        const int m1Count = 0)
    {
       int size = ArraySize(data.areas);
       ArrayResize(data.areas, size + 1);
 
+      ENUM_TIMEFRAMES finalPeriod = (originTF == PERIOD_CURRENT) ? data.tf : originTF;
+
       data.areas[size].Init();
-      data.areas[size].type            = type;
-      data.areas[size].baseStart       = bStart;
-      data.areas[size].baseEnd         = bEnd;
-      data.areas[size].legOutTime      = lOutTime;
-      data.areas[size].proximal        = prox;
-      data.areas[size].distal          = dist;
-      data.areas[size].zoneHeight      = MathAbs(prox - dist);
-      data.areas[size].baseCandleCount = baseCount;
-      data.areas[size].consumptionPct  = 0.0;
-      data.areas[size].isInvalid       = false;
+      data.areas[size].type              = type;
+      data.areas[size].period            = finalPeriod;
+      data.areas[size].detectedTF        = data.tf;
+      data.areas[size].isEscalated       = isEscalated;
+      data.areas[size].baseStart         = bStart;
+      data.areas[size].baseEnd           = bEnd;
+      data.areas[size].legOutTime        = lOutTime;
+      data.areas[size].proximal          = prox;
+      data.areas[size].distal            = dist;
+      data.areas[size].zoneHeight        = MathAbs(prox - dist);
+      data.areas[size].baseCandleCount   = baseCount;
+      data.areas[size].m1BaseCandleCount = (m1Count > 0) ? m1Count : baseCount;
+      data.areas[size].consumptionPct    = 0.0;
+      data.areas[size].isInvalid         = false;
 
       string lbl = (type == RBRDBD_RBR) ? "RBR" : "DBD";
-      data.areas[size].objName = m_objPrefix + EnumToString(data.tf) + "_" + lbl + "_" + TimeToString(bStart, TIME_DATE|TIME_MINUTES);
+      data.areas[size].objName = m_objPrefix + EnumToString(finalPeriod) + "_" + lbl + "_" + TimeToString(bStart, TIME_DATE|TIME_MINUTES);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Recursive MTF Base Consolidation Scanner                         |
+   //| If base candles are excessive in M1 (> maxBaseCandles),          |
+   //| climb TF ladder to check if it compacts into 1-3 boring candles   |
+   //+------------------------------------------------------------------+
+   bool TryEscalateBaseToHTF(const string symbol,
+                             const ENUM_RBRDBD_TYPE type,
+                             const datetime bStart,
+                             const datetime bEnd,
+                             const datetime lOutTime,
+                             const double prox,
+                             const double dist,
+                             const int m1BaseLen,
+                             ENUM_TIMEFRAMES &outTF,
+                             int &outHTFBaseCount)
+   {
+      // Timeframe escalation ladder
+      ENUM_TIMEFRAMES ladder[4] = { PERIOD_M3, PERIOD_M5, PERIOD_M15, PERIOD_H1 };
+
+      for(int i = 0; i < 4; i++)
+      {
+         ENUM_TIMEFRAMES targetTF = ladder[i];
+         int tfSec = PeriodSeconds(targetTF);
+         if(tfSec <= 0) continue;
+
+         // Find bar index covering bStart and bEnd in targetTF
+         int startBar = iBarShift(symbol, targetTF, bStart, false);
+         int endBar   = iBarShift(symbol, targetTF, bEnd, false);
+
+         if(startBar < 0 || endBar < 0) continue;
+
+         // In series array, startBar >= endBar because bStart <= bEnd
+         int htfCandleCount = MathAbs(startBar - endBar) + 1;
+
+         // We seek exactly 1 to 3 candles on higher timeframe
+         if(htfCandleCount >= 1 && htfCandleCount <= 3)
+         {
+            int oldestBar = MathMax(startBar, endBar);
+            int newestBar = MathMin(startBar, endBar);
+
+            MqlRates htfRates[];
+            ArraySetAsSeries(htfRates, true);
+            int copied = CopyRates(symbol, targetTF, newestBar, htfCandleCount, htfRates);
+            if(copied != htfCandleCount) continue;
+
+            bool allBoring = true;
+            for(int k = 0; k < copied; k++)
+            {
+               double body  = MathAbs(htfRates[k].close - htfRates[k].open);
+               double range = htfRates[k].high - htfRates[k].low;
+               if(range > 0.0 && (body / range) > 0.65)
+               {
+                  allBoring = false;
+                  break;
+               }
+            }
+
+            if(allBoring)
+            {
+               outTF          = targetTF;
+               outHTFBaseCount = htfCandleCount;
+               return true;
+            }
+         }
+      }
+
+      return false; // Could not consolidate into clean 1-3 candle base on HTF
    }
 
    //+------------------------------------------------------------------+
@@ -591,13 +797,20 @@ private:
 
          // Format status text
          string typeStr = (area.type == RBRDBD_RBR) ? "RBR" : "DBD";
+         string tfStr   = EnumToString(area.period);
+         string baseInfo;
+         if(area.isEscalated)
+            baseInfo = StringFormat("[%d C in %s (M1: %d C)]", area.baseCandleCount, tfStr, area.m1BaseCandleCount);
+         else
+            baseInfo = StringFormat("[%d C]", area.baseCandleCount);
+
          string statusStr;
          if(area.isInvalid)
-            statusStr = StringFormat(" %s %s [%d C] (100%% Mitigated)", EnumToString(data.tf), typeStr, area.baseCandleCount);
+            statusStr = StringFormat(" %s %s %s (100%% Mitigated)", tfStr, typeStr, baseInfo);
          else if(area.consumptionPct > 0.0)
-            statusStr = StringFormat(" %s %s [%d C] (%.1f%% Retested)", EnumToString(data.tf), typeStr, area.baseCandleCount, area.consumptionPct);
+            statusStr = StringFormat(" %s %s %s (%.1f%% Retested)", tfStr, typeStr, baseInfo, area.consumptionPct);
          else
-            statusStr = StringFormat(" %s %s [%d C] (Fresh)", EnumToString(data.tf), typeStr, area.baseCandleCount);
+            statusStr = StringFormat(" %s %s %s (Fresh)", tfStr, typeStr, baseInfo);
 
          // Draw / Update Text (pinned to baseStart)
          if(!ObjectCreate(0, textName, OBJ_TEXT, 0, area.baseStart, topPrice))

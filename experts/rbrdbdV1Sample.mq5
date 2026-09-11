@@ -22,6 +22,11 @@ input int               InpMaxBaseM1         = 5;                 // Max Base Ca
 input double            InpLegRatioM1        = 1.0;               // Min Leg-Out vs Base Ratio (1.0 = equal)
 input int               InpHistoryBars       = 500;               // History Bars to Scan on Init
 
+input group "=== Dynamic Memory & Garbage Collection ==="
+input bool              InpEnableGC          = true;              // Enable Dynamic Garbage Collection
+input int               InpMaxMemoryBars     = 1500;              // Max Zone Age in M1 Bars before Purge
+input double            InpPurgeDistMult     = 3.0;               // Purge Mitigated Zone if Price > N * Height
+
 input group "=== Visual Colors ==="
 input color             InpColorFreshRBR     = clrMediumSeaGreen; // Fresh RBR (Demand)
 input color             InpColorFreshDBD     = clrCrimson;        // Fresh DBD (Supply)
@@ -75,12 +80,50 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   static datetime lastM1Bar = 0;
+   datetime currentM1Bar = iTime(_Symbol, PERIOD_M1, 0);
+
    // 1. Event-driven update on completed candle close
-   ExtRBRDBD.UpdateOnCandleClose(_Symbol);
+   if(currentM1Bar != lastM1Bar)
+   {
+      lastM1Bar = currentM1Bar;
+      ExtRBRDBD.UpdateOnCandleClose(_Symbol);
+
+      // Run dynamic garbage collection once per completed bar
+      if(InpEnableGC)
+      {
+         double curPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         int purged = ExtRBRDBD.RunGarbageCollection(_Symbol, curPrice, InpMaxMemoryBars, InpPurgeDistMult);
+         if(purged > 0)
+         {
+            PrintFormat("[rbrdbdV1Sample] Garbage Collector purged %d old/mitigated zones.", purged);
+         }
+      }
+   }
 
    // 2. Real-time consumption update on live price tick
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    ExtRBRDBD.UpdateConsumptionOnTick(_Symbol, bid, ask);
+
+   // 3. Update Chart HUD Info
+   SRBRDBDArea areas[];
+   if(ExtRBRDBD.GetAreas(PERIOD_M1, areas))
+   {
+      int total = ArraySize(areas);
+      int active = 0, escalated = 0;
+      for(int i = 0; i < total; i++)
+      {
+         if(!areas[i].isInvalid) active++;
+         if(areas[i].isEscalated) escalated++;
+      }
+      Comment(StringFormat("=== RBR/DBD M1 ENGINE (PHASE 1) ===\n" +
+                           "Total Zones: %d | Active: %d | Escalated (M3/M5): %d\n" +
+                           "Garbage Collection: %s (MaxBars: %d, DistMult: %.1f)\n" +
+                           "Live Bid: %.2f | Ask: %.2f",
+                           total, active, escalated,
+                           InpEnableGC ? "ENABLED" : "DISABLED", InpMaxMemoryBars, InpPurgeDistMult,
+                           bid, ask));
+   }
 }
 //+------------------------------------------------------------------+

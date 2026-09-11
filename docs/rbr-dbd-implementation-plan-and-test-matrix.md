@@ -345,8 +345,8 @@ Diberikan parameter input `Max_Pos_per_Trading_Area` (misal $= 10$ posisi):
 
 | Phase | Komponen Utama | Milestone Deliverables | Target File | Status |
 |---|---|---|---|:---:|
-| **1** | M1 Memory & MTF Escalation | Storage dinamis, cleanup invalid, & recursive TF climb (1-3 candle base) | `rbrdbdV1.mqh` | 🟡 Siap Desain |
-| **2.1** | Base Tightness & MTF Refl | Bobot +1 poin: Base padat $\le 60\%$ body & 1-3 candle di M5/M15 | `rbrdbdV1.mqh` | ⚪ Menunggu Ph 1 |
+| **1** | M1 Memory & MTF Escalation | Storage dinamis, cleanup invalid, & recursive TF climb (1-3 candle base) | `rbrdbdV1.mqh` | 🟢 Selesai (Tested) |
+| **2.1** | Base Tightness & MTF Refl | Bobot +1 poin: Base padat $\le 60\%$ body & 1-3 candle di M5/M15 | `rbrdbdV1.mqh` | 🟡 Siap Desain |
 | **2.2** | BOS/ChoCH Body Close | Bobot +1 poin: Wajib close menembus swing, tolak wick sweep | `rbrdbdV1.mqh` | ⚪ Menunggu 2.1 |
 | **2.3** | Direct Attached FVG | Bobot +1 poin: Celah $\ge 50$ pts menempel langsung di batas base | `rbrdbdV1.mqh` | ⚪ Menunggu 2.2 |
 | **2.4** | HTF POI Reaction Gate | Bobot +1 poin: Reaksi dari M15/H1 POI, tolak No Man's Land | `rbrdbdV1.mqh` | ⚪ Menunggu 2.3 |
