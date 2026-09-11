@@ -460,6 +460,8 @@ public:
                ObjectDelete(0, m_tfList[i].areas[a].objName + "_lbl");
                ObjectDelete(0, m_tfList[i].areas[a].objName + "_bos");
                ObjectDelete(0, m_tfList[i].areas[a].objName + "_fvg");
+               ObjectDelete(0, m_tfList[i].areas[a].objName + "_htfsw");
+               ObjectDelete(0, m_tfList[i].areas[a].objName + "_htfsw_tag");
 
                // Shift array to remove element
                int total = ArraySize(m_tfList[i].areas);
@@ -1861,6 +1863,61 @@ private:
          {
             if(ObjectFind(0, fvgBoxName) >= 0)
                ObjectDelete(0, fvgBoxName);
+         }
+         // Draw / Update HTF Structural Swing Reference Line & Tag (if HTF Swing passed and enabled)
+         string htfSwLineName = rectName + "_htfsw";
+         string htfSwTagName  = rectName + "_htfsw_tag";
+         if(m_enablePhase2_4B && area.passHTFSwing && area.htfSwingLevel > 0.0 && area.htfSwingTime > 0)
+         {
+            datetime swEndTime = area.baseStart;
+            if(swEndTime <= area.htfSwingTime) swEndTime = area.baseEnd;
+
+            color swColor = (area.type == RBRDBD_RBR) ? clrGold : clrDeepPink;
+
+            // 1. Horizontal Reference Trendline
+            if(ObjectFind(0, htfSwLineName) < 0)
+            {
+               ObjectCreate(0, htfSwLineName, OBJ_TREND, 0, area.htfSwingTime, area.htfSwingLevel, swEndTime, area.htfSwingLevel);
+            }
+            else
+            {
+               ObjectMove(0, htfSwLineName, 0, area.htfSwingTime, area.htfSwingLevel);
+               ObjectMove(0, htfSwLineName, 1, swEndTime, area.htfSwingLevel);
+            }
+            ObjectSetInteger(0, htfSwLineName, OBJPROP_COLOR, swColor);
+            ObjectSetInteger(0, htfSwLineName, OBJPROP_STYLE, STYLE_DASH);
+            ObjectSetInteger(0, htfSwLineName, OBJPROP_WIDTH, 2); // Thicker dashed line for HTF importance
+            ObjectSetInteger(0, htfSwLineName, OBJPROP_RAY_RIGHT, false);
+            ObjectSetInteger(0, htfSwLineName, OBJPROP_BACK, true);
+
+            // 2. Tag / Label at the HTF Swing origin point
+            string tagText;
+            if(area.type == RBRDBD_RBR)
+               tagText = StringFormat(" ▼ %s Swing Low (%.2f)", GetTFShortName(area.htfSwingTF), area.htfSwingLevel);
+            else
+               tagText = StringFormat(" ▲ %s Swing High (%.2f)", GetTFShortName(area.htfSwingTF), area.htfSwingLevel);
+
+            if(ObjectFind(0, htfSwTagName) < 0)
+            {
+               ObjectCreate(0, htfSwTagName, OBJ_TEXT, 0, area.htfSwingTime, area.htfSwingLevel);
+            }
+            else
+            {
+               ObjectMove(0, htfSwTagName, 0, area.htfSwingTime, area.htfSwingLevel);
+            }
+            ObjectSetString(0, htfSwTagName, OBJPROP_TEXT, tagText);
+            ObjectSetInteger(0, htfSwTagName, OBJPROP_COLOR, swColor);
+            ObjectSetInteger(0, htfSwTagName, OBJPROP_ANCHOR, (area.type == RBRDBD_RBR) ? ANCHOR_LEFT_UPPER : ANCHOR_LEFT_LOWER);
+            ObjectSetInteger(0, htfSwTagName, OBJPROP_FONTSIZE, 8);
+            ObjectSetString(0, htfSwTagName, OBJPROP_FONT, "Arial Bold");
+            ObjectSetInteger(0, htfSwTagName, OBJPROP_BACK, false);
+         }
+         else
+         {
+            if(ObjectFind(0, htfSwLineName) >= 0)
+               ObjectDelete(0, htfSwLineName);
+            if(ObjectFind(0, htfSwTagName) >= 0)
+               ObjectDelete(0, htfSwTagName);
          }
       }
 
