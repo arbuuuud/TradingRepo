@@ -45,6 +45,7 @@ struct SLivingTradingArea
 
    // Floor Geometries (Bottom / Demand Side)
    ENUM_BOUNDARY_SOURCE floorSource;       // Organic RBR, HTF Swing, or ATR
+   datetime             floorBaseStart;    // Base formation time (unique identifier)
    double               floorBoundary;     // Final Floor Price (Distal - Buffer)
    double               floorDistal;       // Raw Distal
    double               floorProximal;     // Raw Proximal
@@ -56,6 +57,7 @@ struct SLivingTradingArea
 
    // Roof Geometries (Top / Supply Side)
    ENUM_BOUNDARY_SOURCE roofSource;        // Organic DBD, HTF Swing, or ATR
+   datetime             roofBaseStart;     // Base formation time (unique identifier)
    double               roofBoundary;      // Final Roof Price (Distal + Buffer)
    double               roofDistal;        // Raw Distal
    double               roofProximal;      // Raw Proximal
@@ -94,6 +96,7 @@ struct SLivingTradingArea
       areaId                = 0;
 
       floorSource           = BOUNDARY_ORGANIC_RBRDBD;
+      floorBaseStart        = 0;
       floorBoundary         = 0.0;
       floorDistal           = 0.0;
       floorProximal         = 0.0;
@@ -104,6 +107,7 @@ struct SLivingTradingArea
       hasOrganicFloor       = false;
 
       roofSource            = BOUNDARY_ORGANIC_RBRDBD;
+      roofBaseStart         = 0;
       roofBoundary          = 0.0;
       roofDistal            = 0.0;
       roofProximal          = 0.0;
@@ -188,8 +192,38 @@ public:
       double midPrice = (currentBid + currentAsk) * 0.5;
       if(midPrice <= 0.0) return false;
 
-      // 1. If currently no active area OR active area is breached / fully exhausted -> Rebuild
-      if(!m_activeArea.isValid || IsAreaBreached(midPrice))
+      // 1. Check if a newer/closer RBR or DBD zone has formed
+      bool structureShifted = false;
+      if(m_activeArea.isValid)
+      {
+         SRBRDBDArea curNearestFloor, curNearestRoof;
+         curNearestFloor.Init();
+         curNearestRoof.Init();
+
+         bool hasFloor = rbrdbdEngine.FindNearestFloor(m_baseTF, midPrice, curNearestFloor);
+         bool hasRoof  = rbrdbdEngine.FindNearestRoof(m_baseTF, midPrice, curNearestRoof);
+
+         // Check if a closer/newer Floor has formed
+         if(hasFloor)
+         {
+            if(!m_activeArea.hasOrganicFloor || curNearestFloor.baseStart != m_activeArea.floorBaseStart)
+            {
+               structureShifted = true;
+            }
+         }
+
+         // Check if a closer/newer Roof has formed
+         if(!structureShifted && hasRoof)
+         {
+            if(!m_activeArea.hasOrganicRoof || curNearestRoof.baseStart != m_activeArea.roofBaseStart)
+            {
+               structureShifted = true;
+            }
+         }
+      }
+
+      // 2. If no active area, breached/invalidated, OR closer structure formed -> Rebuild
+      if(!m_activeArea.isValid || IsAreaBreached(midPrice) || structureShifted)
       {
          bool rebuilt = BuildNewTradingArea(symbol, rbrdbdEngine, midPrice);
          if(!rebuilt)
@@ -200,10 +234,10 @@ public:
          }
       }
 
-      // 2. Living Exhaustion State Tracking (Ratchet on Live Price)
+      // 3. Living Exhaustion State Tracking (Ratchet on Live Price)
       UpdateExhaustionRatchet(currentBid, currentAsk);
 
-      // 3. Render / Update visual elements
+      // 4. Render / Update visual elements
       if(m_drawEnabled)
       {
          DrawTradingAreaObjects();
@@ -397,6 +431,7 @@ private:
       {
          newArea.hasOrganicFloor = true;
          newArea.floorSource     = BOUNDARY_ORGANIC_RBRDBD;
+         newArea.floorBaseStart  = floorZone.baseStart;
          newArea.floorBoundary   = floorZone.finalBoundary;
          newArea.floorDistal     = floorZone.distal;
          newArea.floorProximal   = floorZone.proximal;
@@ -413,6 +448,7 @@ private:
          {
             newArea.hasOrganicFloor = false;
             newArea.floorSource     = BOUNDARY_HTF_SWING;
+            newArea.floorBaseStart  = 0;
             newArea.floorBoundary   = htfSwingLow - (50.0 * _Point);
             newArea.floorDistal     = htfSwingLow;
             newArea.floorProximal   = htfSwingLow;
@@ -426,6 +462,7 @@ private:
             // ATR Projection downwards
             newArea.hasOrganicFloor = false;
             newArea.floorSource     = BOUNDARY_ATR_PROJECTED;
+            newArea.floorBaseStart  = 0;
             newArea.floorBoundary   = NormalizeDouble(midPrice - (1.0 * dailyATR), _Digits);
             newArea.floorDistal     = newArea.floorBoundary;
             newArea.floorProximal   = newArea.floorBoundary;
@@ -441,6 +478,7 @@ private:
       {
          newArea.hasOrganicRoof = true;
          newArea.roofSource     = BOUNDARY_ORGANIC_RBRDBD;
+         newArea.roofBaseStart  = roofZone.baseStart;
          newArea.roofBoundary   = roofZone.finalBoundary;
          newArea.roofDistal     = roofZone.distal;
          newArea.roofProximal   = roofZone.proximal;
@@ -457,6 +495,7 @@ private:
          {
             newArea.hasOrganicRoof = false;
             newArea.roofSource     = BOUNDARY_HTF_SWING;
+            newArea.roofBaseStart  = 0;
             newArea.roofBoundary   = htfSwingHigh + (50.0 * _Point);
             newArea.roofDistal     = htfSwingHigh;
             newArea.roofProximal   = htfSwingHigh;
@@ -470,6 +509,7 @@ private:
             // ATR Projection upwards
             newArea.hasOrganicRoof = false;
             newArea.roofSource     = BOUNDARY_ATR_PROJECTED;
+            newArea.roofBaseStart  = 0;
             newArea.roofBoundary   = NormalizeDouble(midPrice + (1.0 * dailyATR), _Digits);
             newArea.roofDistal     = newArea.roofBoundary;
             newArea.roofProximal   = newArea.roofBoundary;
@@ -588,8 +628,9 @@ private:
    {
       if(!m_activeArea.isValid) return;
 
-      datetime tStart = m_activeArea.createdTime;
-      datetime tEnd   = TimeCurrent() + (PeriodSeconds(m_baseTF) * 30); // 30 bars into future
+      datetime curTime = TimeCurrent();
+      datetime tStart  = curTime - (PeriodSeconds(m_baseTF) * 20); // Pin to recent bars
+      datetime tEnd    = curTime + (PeriodSeconds(m_baseTF) * 35); // Extend into immediate future
 
       // 1. Buy Area Rectangle (0% - 25%)
       string buyRect = m_objPrefix + "BuyZone";
