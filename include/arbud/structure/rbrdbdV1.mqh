@@ -41,6 +41,14 @@ struct SRBRDBDArea
    datetime          invalidTime;      // Bar time when 100% penetration occurred
    string            objName;          // Chart rectangle object name
 
+   // Phase 2.1: Base Tightness & MTF Reflection
+   bool              passBaseTightness;// M1 base candles <= 60% body and baseRange <= 0.8 * legOutRange
+   bool              passMTFReflection;// Base reflects as clean 1-3 candles in M3, M5, or M15
+   ENUM_TIMEFRAMES   reflTF;           // Timeframe that confirmed clean reflection
+   int               reflCandleCount;  // Number of clean candles in reflTF
+   int               scorePhase2_1;    // +1 Point if both pass, 0 otherwise
+   int               totalScore;       // Phase 2 total score accumulator (0 to 5)
+
    void Init()
    {
       type              = RBRDBD_NONE;
@@ -59,6 +67,13 @@ struct SRBRDBDArea
       isInvalid         = false;
       invalidTime       = 0;
       objName           = "";
+
+      passBaseTightness = false;
+      passMTFReflection = false;
+      reflTF            = PERIOD_CURRENT;
+      reflCandleCount   = 0;
+      scorePhase2_1     = 0;
+      totalScore        = 0;
    }
 };
 
@@ -532,8 +547,8 @@ private:
             if(baseLen <= data.maxBaseCandles)
             {
                // Standard Base within limits
-               RegisterNewArea(data, RBRDBD_RBR, bStartTime, bEndTime, rates[outIdx].time,
-                               baseHigh, baseLow, baseLen, data.tf, false, baseLen);
+               RegisterNewArea(symbol, data, RBRDBD_RBR, bStartTime, bEndTime, rates[outIdx].time,
+                               baseHigh, baseLow, baseLen, data.tf, false, baseLen, outRange, baseRange);
                return;
             }
             else if(data.tf == PERIOD_M1)
@@ -544,8 +559,8 @@ private:
                if(TryEscalateBaseToHTF(symbol, RBRDBD_RBR, bStartTime, bEndTime, rates[outIdx].time,
                                        baseHigh, baseLow, baseLen, htf, htfCount))
                {
-                  RegisterNewArea(data, RBRDBD_RBR, bStartTime, bEndTime, rates[outIdx].time,
-                                  baseHigh, baseLow, htfCount, htf, true, baseLen);
+                  RegisterNewArea(symbol, data, RBRDBD_RBR, bStartTime, bEndTime, rates[outIdx].time,
+                                  baseHigh, baseLow, htfCount, htf, true, baseLen, outRange, baseRange);
                   return;
                }
                else
@@ -553,8 +568,8 @@ private:
                   // Fallback for Strategy Tester (where HTF rates aren't synced yet) or uncompressed M1 base
                   if(baseLen <= 8)
                   {
-                     RegisterNewArea(data, RBRDBD_RBR, bStartTime, bEndTime, rates[outIdx].time,
-                                     baseHigh, baseLow, baseLen, data.tf, false, baseLen);
+                     RegisterNewArea(symbol, data, RBRDBD_RBR, bStartTime, bEndTime, rates[outIdx].time,
+                                     baseHigh, baseLow, baseLen, data.tf, false, baseLen, outRange, baseRange);
                      return;
                   }
                }
@@ -567,8 +582,8 @@ private:
             if(baseLen <= data.maxBaseCandles)
             {
                // Standard Base within limits
-               RegisterNewArea(data, RBRDBD_DBD, bStartTime, bEndTime, rates[outIdx].time,
-                               baseLow, baseHigh, baseLen, data.tf, false, baseLen);
+               RegisterNewArea(symbol, data, RBRDBD_DBD, bStartTime, bEndTime, rates[outIdx].time,
+                               baseLow, baseHigh, baseLen, data.tf, false, baseLen, outRange, baseRange);
                return;
             }
             else if(data.tf == PERIOD_M1)
@@ -579,8 +594,8 @@ private:
                if(TryEscalateBaseToHTF(symbol, RBRDBD_DBD, bStartTime, bEndTime, rates[outIdx].time,
                                        baseLow, baseHigh, baseLen, htf, htfCount))
                {
-                  RegisterNewArea(data, RBRDBD_DBD, bStartTime, bEndTime, rates[outIdx].time,
-                                  baseLow, baseHigh, htfCount, htf, true, baseLen);
+                  RegisterNewArea(symbol, data, RBRDBD_DBD, bStartTime, bEndTime, rates[outIdx].time,
+                                  baseLow, baseHigh, htfCount, htf, true, baseLen, outRange, baseRange);
                   return;
                }
                else
@@ -588,8 +603,8 @@ private:
                   // Fallback for Strategy Tester (where HTF rates aren't synced yet) or uncompressed M1 base
                   if(baseLen <= 8)
                   {
-                     RegisterNewArea(data, RBRDBD_DBD, bStartTime, bEndTime, rates[outIdx].time,
-                                     baseLow, baseHigh, baseLen, data.tf, false, baseLen);
+                     RegisterNewArea(symbol, data, RBRDBD_DBD, bStartTime, bEndTime, rates[outIdx].time,
+                                     baseLow, baseHigh, baseLen, data.tf, false, baseLen, outRange, baseRange);
                      return;
                   }
                }
@@ -601,7 +616,8 @@ private:
    //+------------------------------------------------------------------+
    //| Register newly identified zone into areas array                  |
    //+------------------------------------------------------------------+
-   void RegisterNewArea(STimeframeRBRDBDData &data,
+   void RegisterNewArea(const string symbol,
+                        STimeframeRBRDBDData &data,
                         const ENUM_RBRDBD_TYPE type,
                         const datetime bStart,
                         const datetime bEnd,
@@ -611,7 +627,9 @@ private:
                         const int baseCount,
                         const ENUM_TIMEFRAMES originTF = PERIOD_CURRENT,
                         const bool isEscalated = false,
-                        const int m1Count = 0)
+                        const int m1Count = 0,
+                        const double outRange = 0.0,
+                        const double baseRange = 0.0)
    {
       int size = ArraySize(data.areas);
       ArrayResize(data.areas, size + 1);
@@ -634,8 +652,106 @@ private:
       data.areas[size].consumptionPct    = 0.0;
       data.areas[size].isInvalid         = false;
 
+      // --- PHASE 2.1: Base Tightness & MTF Reflection Evaluator ---
+      EvaluatePhase2_1_TightnessAndReflection(symbol, data.areas[size], outRange, baseRange);
+
       string lbl = (type == RBRDBD_RBR) ? "RBR" : "DBD";
       data.areas[size].objName = m_objPrefix + EnumToString(finalPeriod) + "_" + lbl + "_" + TimeToString(bStart, TIME_DATE|TIME_MINUTES);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Phase 2.1 Evaluator: M1 Base Tightness & Ladder M3->M5->M15      |
+   //+------------------------------------------------------------------+
+   void EvaluatePhase2_1_TightnessAndReflection(const string symbol,
+                                                SRBRDBDArea &area,
+                                                const double outRange,
+                                                const double baseRange)
+   {
+      // 1. Base Tightness Check (M1)
+      // BaseRange must be compact compared to Leg-Out explosion (BaseRange <= 0.80 * OutRange)
+      bool tight = false;
+      if(outRange > 0.0 && baseRange > 0.0)
+      {
+         if(baseRange <= (outRange * 0.80))
+         {
+            tight = true;
+         }
+      }
+      area.passBaseTightness = tight;
+
+      // 2. MTF Reflection Ladder: M3 -> M5 -> M15
+      ENUM_TIMEFRAMES ladder[3] = { PERIOD_M3, PERIOD_M5, PERIOD_M15 };
+      bool reflPass = false;
+
+      for(int i = 0; i < 3; i++)
+      {
+         ENUM_TIMEFRAMES targetTF = ladder[i];
+         int tfSec = PeriodSeconds(targetTF);
+         if(tfSec <= 0) continue;
+
+         int startBar = iBarShift(symbol, targetTF, area.baseStart, false);
+         int endBar   = iBarShift(symbol, targetTF, area.baseEnd, false);
+         if(startBar < 0 || endBar < 0) continue;
+
+         int htfCandleCount = MathAbs(startBar - endBar) + 1;
+
+         // On M3, we allow 1-3 candles; on M5: 1-2 candles; on M15: 1 candle
+         int maxAllowed = (targetTF == PERIOD_M3) ? 3 : ((targetTF == PERIOD_M5) ? 2 : 1);
+
+         if(htfCandleCount >= 1 && htfCandleCount <= maxAllowed)
+         {
+            int newestBar = MathMin(startBar, endBar);
+            MqlRates htfRates[];
+            ArraySetAsSeries(htfRates, true);
+
+            int copied = CopyRates(symbol, targetTF, newestBar, htfCandleCount, htfRates);
+            if(copied == htfCandleCount)
+            {
+               bool clean = true;
+               for(int k = 0; k < copied; k++)
+               {
+                  double body  = MathAbs(htfRates[k].close - htfRates[k].open);
+                  double range = htfRates[k].high - htfRates[k].low;
+                  // Candle must not be a massive runaway candle (> 65% body rejected as consolidation)
+                  if(range > 0.0 && (body / range) > 0.65)
+                  {
+                     clean = false;
+                     break;
+                  }
+               }
+
+               if(clean)
+               {
+                  reflPass             = true;
+                  area.passMTFReflection = true;
+                  area.reflTF          = targetTF;
+                  area.reflCandleCount = htfCandleCount;
+                  break; // Confirmed on ladder!
+               }
+            }
+         }
+      }
+
+      // If zone was already escalated to M3/M5 in Phase 1, it naturally satisfies MTF reflection
+      if(!reflPass && area.isEscalated)
+      {
+         area.passMTFReflection = true;
+         area.reflTF          = area.period;
+         area.reflCandleCount = area.baseCandleCount;
+         reflPass             = true;
+      }
+
+      // Scoring: +1 Point if both Base Tightness and MTF Reflection pass
+      if(area.passBaseTightness && area.passMTFReflection)
+      {
+         area.scorePhase2_1 = 1;
+      }
+      else
+      {
+         area.scorePhase2_1 = 0;
+      }
+
+      area.totalScore = area.scorePhase2_1;
    }
 
    //+------------------------------------------------------------------+
@@ -853,13 +969,27 @@ private:
          else
             baseInfo = StringFormat("[%d C]", area.baseCandleCount);
 
+         // Phase 2.1 Score Info
+         string scoreStr = "";
+         if(area.scorePhase2_1 > 0)
+         {
+            string reflName = EnumToString(area.reflTF);
+            scoreStr = StringFormat(" [Tight:PASS Refl:%s (%dC) (+1pt)]", reflName, area.reflCandleCount);
+         }
+         else
+         {
+            string tFail = area.passBaseTightness ? "Tight:PASS" : "Tight:FAIL";
+            string rFail = area.passMTFReflection ? "Refl:PASS" : "Refl:FAIL";
+            scoreStr = StringFormat(" [%s %s (0pt)]", tFail, rFail);
+         }
+
          string statusStr;
          if(area.isInvalid)
-            statusStr = StringFormat(" %s %s %s (100%% Mitigated)", tfStr, typeStr, baseInfo);
+            statusStr = StringFormat(" %s %s %s%s (100%% Mitigated)", tfStr, typeStr, baseInfo, scoreStr);
          else if(area.consumptionPct > 0.0)
-            statusStr = StringFormat(" %s %s %s (%.1f%% Retested)", tfStr, typeStr, baseInfo, area.consumptionPct);
+            statusStr = StringFormat(" %s %s %s%s (%.1f%% Retested)", tfStr, typeStr, baseInfo, scoreStr, area.consumptionPct);
          else
-            statusStr = StringFormat(" %s %s %s (Fresh)", tfStr, typeStr, baseInfo);
+            statusStr = StringFormat(" %s %s %s%s (Fresh)", tfStr, typeStr, baseInfo, scoreStr);
 
          // Draw / Update Text (pinned to baseStart)
          if(ObjectFind(0, textName) < 0)
