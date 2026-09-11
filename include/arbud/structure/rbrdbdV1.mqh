@@ -596,6 +596,72 @@ public:
       return true;
    }
 
+   //+------------------------------------------------------------------+
+   //| Find Nearest Valid Floor (RBR) strictly below target price       |
+   //+------------------------------------------------------------------+
+   bool FindNearestFloor(const ENUM_TIMEFRAMES tf, const double price, SRBRDBDArea &outFloor)
+   {
+      int idx = FindTFIndex(tf);
+      if(idx < 0) return false;
+
+      bool found = false;
+      double closestDist = DBL_MAX;
+      int total = ArraySize(m_tfList[idx].areas);
+
+      for(int i = 0; i < total; i++)
+      {
+         if(m_tfList[idx].areas[i].isInvalid) continue;
+         if(m_tfList[idx].areas[i].type != RBRDBD_RBR) continue;
+
+         // Must be strictly below current price
+         double topPrice = m_tfList[idx].areas[i].proximal;
+         if(topPrice < price)
+         {
+            double dist = price - topPrice;
+            if(dist < closestDist)
+            {
+               closestDist = dist;
+               outFloor    = m_tfList[idx].areas[i];
+               found       = true;
+            }
+         }
+      }
+      return found;
+   }
+
+   //+------------------------------------------------------------------+
+   //| Find Nearest Valid Roof (DBD) strictly above target price        |
+   //+------------------------------------------------------------------+
+   bool FindNearestRoof(const ENUM_TIMEFRAMES tf, const double price, SRBRDBDArea &outRoof)
+   {
+      int idx = FindTFIndex(tf);
+      if(idx < 0) return false;
+
+      bool found = false;
+      double closestDist = DBL_MAX;
+      int total = ArraySize(m_tfList[idx].areas);
+
+      for(int i = 0; i < total; i++)
+      {
+         if(m_tfList[idx].areas[i].isInvalid) continue;
+         if(m_tfList[idx].areas[i].type != RBRDBD_DBD) continue;
+
+         // Must be strictly above current price
+         double botPrice = m_tfList[idx].areas[i].proximal;
+         if(botPrice > price)
+         {
+            double dist = botPrice - price;
+            if(dist < closestDist)
+            {
+               closestDist = dist;
+               outRoof     = m_tfList[idx].areas[i];
+               found       = true;
+            }
+         }
+      }
+      return found;
+   }
+
 private:
    //+------------------------------------------------------------------+
    //| Find index of timeframe in registered list                       |

@@ -12,6 +12,7 @@
 //| Includes                                                         |
 //+------------------------------------------------------------------+
 #include "..\include\arbud\structure\rbrdbdV1.mqh"
+#include "..\include\arbud\structure\LivingTradingArea.mqh"
 
 //+------------------------------------------------------------------+
 //| Inputs                                                           |
@@ -33,6 +34,10 @@ input double            InpMinFVGGapPoints   = 50.0;              // Min FVG Gap
 input group "=== Phase 3 Dynamic Buffer Calculation ==="
 input bool              InpEnablePhase3      = true;              // Enable Phase 3 Dynamic Buffer (10-Sw vs 2xBase)
 
+input group "=== Phase 4 Living TradingArea & Exhaustion ==="
+input bool              InpEnablePhase4      = true;              // Enable Phase 4 Living TradingArea Corridor
+input bool              InpDrawTradingArea   = true;              // Draw TradingArea (Buy/Sell Boxes, TP50, Hard SL)
+
 input group "=== Dynamic Memory & Garbage Collection ==="
 input bool              InpEnableGC          = true;              // Enable Dynamic Garbage Collection
 input int               InpMaxMemoryBars     = 1500;              // Max Zone Age in M1 Bars before Purge
@@ -47,7 +52,8 @@ input color             InpColorMitigated    = clrGray;           // Fully Mitig
 //+------------------------------------------------------------------+
 //| Global Object                                                    |
 //+------------------------------------------------------------------+
-CRBRDBDV1 ExtRBRDBD;
+CRBRDBDV1                 ExtRBRDBD;
+CLivingTradingAreaManager ExtTradingArea;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -78,6 +84,10 @@ int OnInit()
    // 2. Scan history bars and evaluate retests for all registered timeframes
    ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars);
 
+   // 3. Configure TradingArea Manager
+   ExtTradingArea.SetDrawEnabled(InpDrawTradingArea);
+   ExtTradingArea.SetBaseTF(PERIOD_M1);
+
    PrintFormat("[rbrdbdV1Sample] Initialized on %s (PERIOD_M1). Total active zones: %d", 
                _Symbol, ExtRBRDBD.GetValidAreasCount(PERIOD_M1));
 
@@ -89,8 +99,9 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   // Clean up all rectangle boxes and text labels
+   // Clean up all rectangle boxes, text labels, and TradingArea objects
    ExtRBRDBD.ClearChartObjects();
+   ExtTradingArea.ClearChartObjects();
    PrintFormat("=== [rbrdbdV1Sample] Deinitialized. Objects cleared. Reason: %d ===", reason);
 }
 
@@ -125,7 +136,13 @@ void OnTick()
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    ExtRBRDBD.UpdateConsumptionOnTick(_Symbol, bid, ask);
 
-   // 3. Update Chart HUD Info
+   // 3. Update Living TradingArea & Exhaustion State Machine (Phase 4)
+   if(InpEnablePhase4)
+   {
+      ExtTradingArea.UpdateTradingArea(_Symbol, ExtRBRDBD, bid, ask);
+   }
+
+   // 4. Update Chart HUD Info
    SRBRDBDArea areas[];
    if(ExtRBRDBD.GetAreas(PERIOD_M1, areas))
    {
@@ -188,16 +205,47 @@ void OnTick()
                                          p21Passed, bosPassed, fvgPassed, htfPOIPassed, countStr0, countStr1, countStr2, total,
                                          countBufSwing, countBuf2xBase, avgBufferPoints, avgBufferPoints * _Point);
 
+      string tradingAreaHUD = "";
+      if(InpEnablePhase4)
+      {
+         SLivingTradingArea area = ExtTradingArea.GetActiveArea();
+         if(area.isValid)
+         {
+            string fStr = area.hasOrganicFloor ? StringFormat("Org RBR (Str%d|%s)", area.floorStrength, area.floorDNA) : "Synthetic";
+            string rStr = area.hasOrganicRoof  ? StringFormat("Org DBD (Str%d|%s)", area.roofStrength, area.roofDNA)  : "Synthetic";
+            string bExh = (area.buyExhaustionLevel == EXHAUSTION_L0_FRESH) ? "Fresh" : StringFormat("%.1f%%", area.buyMaxPenetrationPct);
+            string sExh = (area.sellExhaustionLevel == EXHAUSTION_L0_FRESH) ? "Fresh" : StringFormat("%.1f%%", area.sellMaxPenetrationPct);
+
+            string bOrderOK = area.hasOrganicFloor && area.floorStrength >= 1 ? "READY" : "BLOCKED";
+            string sOrderOK = area.hasOrganicRoof  && area.roofStrength >= 1  ? "READY" : "BLOCKED";
+
+            tradingAreaHUD = StringFormat("\n=== ACTIVE LIVING TRADING AREA (#%d) ===\n" +
+                                          "Corridor Range: %.2f USD | Hard TP 50%%: %.2f\n" +
+                                          "Floor: %.2f [%s] -> Buy Area [L%d (%s)] Limit: %s\n" +
+                                          "Roof : %.2f [%s] -> Sell Area [L%d (%s)] Limit: %s\n" +
+                                          "Hard SL Boundaries: Floor SL: %.2f | Roof SL: %.2f",
+                                          area.areaId,
+                                          area.totalRange, area.hardTP50,
+                                          area.floorBoundary, fStr, (int)area.buyExhaustionLevel, bExh, bOrderOK,
+                                          area.roofBoundary, rStr, (int)area.sellExhaustionLevel, sExh, sOrderOK,
+                                          area.floorHardSL, area.roofHardSL);
+         }
+         else
+         {
+            tradingAreaHUD = "\n=== ACTIVE LIVING TRADING AREA ===\nStatus: WAITING FOR STRUCTURE (Searching Floor/Roof)";
+         }
+      }
+
       Comment(StringFormat("%s\n" +
                            "Total Zones: %d | Active: %d | Escalated (M3/M5): %d\n" +
                            "%s\n" +
                            "Garbage Collection: %s (MaxBars: %d, DistMult: %.1f)\n" +
-                           "Live Bid: %.2f | Ask: %.2f",
+                           "Live Bid: %.2f | Ask: %.2f%s",
                            modeHeader,
                            total, active, escalated,
                            qualityBreakdown,
                            InpEnableGC ? "ENABLED" : "DISABLED", InpMaxMemoryBars, InpPurgeDistMult,
-                           bid, ask));
+                           bid, ask, tradingAreaHUD));
    }
 }
 //+------------------------------------------------------------------+
