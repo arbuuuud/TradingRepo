@@ -87,11 +87,15 @@ void OnTick()
    // Strategy Tester / Live Warmup
    if(!historyLoaded)
    {
-      historyLoaded = true;
-      Print("[rbrdbdV1Sample] Executing InitHistory on first tick...");
-      ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars);
-      PrintFormat("[rbrdbdV1Sample] InitHistory finished. Active zones on chart: %d", ExtRBRDBD.GetValidAreasCount(PERIOD_M1));
-      ChartRedraw(0);
+      int availableBars = iBars(_Symbol, PERIOD_M1);
+      if(availableBars >= (InpMaxBaseM1 + 5))
+      {
+         historyLoaded = true;
+         PrintFormat("[rbrdbdV1Sample] Executing InitHistory on first ready tick (Bars: %d)...", availableBars);
+         ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars);
+         PrintFormat("[rbrdbdV1Sample] InitHistory finished. Active zones on chart: %d", ExtRBRDBD.GetValidAreasCount(PERIOD_M1));
+         ChartRedraw(0);
+      }
    }
 
    // 1. Event-driven update on completed candle close

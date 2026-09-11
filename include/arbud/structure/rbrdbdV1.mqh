@@ -548,6 +548,16 @@ private:
                                   baseHigh, baseLow, htfCount, htf, true, baseLen);
                   return;
                }
+               else
+               {
+                  // Fallback for Strategy Tester (where HTF rates aren't synced yet) or uncompressed M1 base
+                  if(baseLen <= 8)
+                  {
+                     RegisterNewArea(data, RBRDBD_RBR, bStartTime, bEndTime, rates[outIdx].time,
+                                     baseHigh, baseLow, baseLen, data.tf, false, baseLen);
+                     return;
+                  }
+               }
             }
          }
 
@@ -572,6 +582,16 @@ private:
                   RegisterNewArea(data, RBRDBD_DBD, bStartTime, bEndTime, rates[outIdx].time,
                                   baseLow, baseHigh, htfCount, htf, true, baseLen);
                   return;
+               }
+               else
+               {
+                  // Fallback for Strategy Tester (where HTF rates aren't synced yet) or uncompressed M1 base
+                  if(baseLen <= 8)
+                  {
+                     RegisterNewArea(data, RBRDBD_DBD, bStartTime, bEndTime, rates[outIdx].time,
+                                     baseLow, baseHigh, baseLen, data.tf, false, baseLen);
+                     return;
+                  }
                }
             }
          }
