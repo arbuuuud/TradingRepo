@@ -205,12 +205,13 @@ public:
       double midPrice = (currentBid + currentAsk) * 0.5;
       if(midPrice <= 0.0) return false;
 
-      // 1. Check if structure shifted or upgrade to Condition 1 is available:
-      // Keep area stable while price is inside current corridor.
+      // 1. Check if structure shifted or upgraded:
       // Rebuild if:
       // - Price breaks outside current corridor, OR
       // - Active area reached Hard SL or 100% full exhaustion, OR
-      // - Area is currently on Fallback (Cond 2 or Cond 3) AND a newly formed RBR/DBD now allows Condition 1!
+      // - A NEWER / CLOSER valid RBR formed (floor base shifted), OR
+      // - A NEWER / CLOSER valid DBD formed (roof base shifted), OR
+      // - Area was on Fallback (Cond 2 or 3) and now a counter-zone formed (upgrade to Cond 1).
       bool structureShifted = false;
       if(m_activeArea.isValid)
       {
@@ -218,17 +219,29 @@ public:
          {
             structureShifted = true;
          }
-         else if(m_activeArea.cascadeCondition > CASCADE_COND1_DUAL_ORGANIC)
+         else
          {
-            // Currently on fallback. Check if an organic counter-zone has just formed!
-            SRBRDBDArea checkFloor, checkRoof;
-            checkFloor.Init(); checkRoof.Init();
-            bool hasOrganicFloor = rbrdbdEngine.FindNearestFloor(m_baseTF, midPrice, checkFloor);
-            bool hasOrganicRoof  = rbrdbdEngine.FindNearestRoof(m_baseTF, midPrice, checkRoof);
-            if(hasOrganicFloor && hasOrganicRoof)
+            SRBRDBDArea curFloor, curRoof;
+            curFloor.Init(); curRoof.Init();
+            bool hasOrganicFloor = rbrdbdEngine.FindNearestFloor(m_baseTF, midPrice, curFloor);
+            bool hasOrganicRoof  = rbrdbdEngine.FindNearestRoof(m_baseTF, midPrice, curRoof);
+
+            // Check if there is a new / closer valid Floor (RBR above previous floor)
+            if(hasOrganicFloor)
             {
-               // Condition 1 is now fulfilled! Immediately upgrade!
-               structureShifted = true;
+               if(!m_activeArea.hasOrganicFloor || curFloor.baseStart != m_activeArea.floorBaseStart)
+               {
+                  structureShifted = true;
+               }
+            }
+
+            // Check if there is a new / closer valid Roof (DBD below previous roof)
+            if(!structureShifted && hasOrganicRoof)
+            {
+               if(!m_activeArea.hasOrganicRoof || curRoof.baseStart != m_activeArea.roofBaseStart)
+               {
+                  structureShifted = true;
+               }
             }
          }
       }
