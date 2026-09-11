@@ -598,6 +598,7 @@ public:
 
    //+------------------------------------------------------------------+
    //| Find Nearest Valid Floor (RBR) strictly below target price       |
+   //| Rule: Ignore any zone with Strength 0 (Weak/Unqualified)         |
    //+------------------------------------------------------------------+
    bool FindNearestFloor(const ENUM_TIMEFRAMES tf, const double price, SRBRDBDArea &outFloor)
    {
@@ -612,6 +613,9 @@ public:
       {
          if(m_tfList[idx].areas[i].isInvalid) continue;
          if(m_tfList[idx].areas[i].type != RBRDBD_RBR) continue;
+
+         // IGNORE STRENGTH 0: Minimum Strength 1 (2 stars) required to qualify as Floor
+         if(m_tfList[idx].areas[i].strengthLevel < 1) continue;
 
          // Must be strictly below current price
          double topPrice = m_tfList[idx].areas[i].proximal;
@@ -631,6 +635,7 @@ public:
 
    //+------------------------------------------------------------------+
    //| Find Nearest Valid Roof (DBD) strictly above target price        |
+   //| Rule: Ignore any zone with Strength 0 (Weak/Unqualified)         |
    //+------------------------------------------------------------------+
    bool FindNearestRoof(const ENUM_TIMEFRAMES tf, const double price, SRBRDBDArea &outRoof)
    {
@@ -646,7 +651,10 @@ public:
          if(m_tfList[idx].areas[i].isInvalid) continue;
          if(m_tfList[idx].areas[i].type != RBRDBD_DBD) continue;
 
-         // Must be strictly above current price
+         // IGNORE STRENGTH 0: Minimum Strength 1 (2 stars) required to qualify as Roof
+         if(m_tfList[idx].areas[i].strengthLevel < 1) continue;
+
+         // Must be strictly below current price
          double botPrice = m_tfList[idx].areas[i].proximal;
          if(botPrice > price)
          {
