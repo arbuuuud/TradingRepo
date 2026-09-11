@@ -149,17 +149,24 @@ Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke 
 
 #### 🔸 Phase 2.4: HTF POI Reaction (Anti-No Man's Land)
 - **Logika Matematis**:
-  - Menghubungkan titik awal Leg-In dengan zona POI di Timeframe Tinggi (M15 / H1).
-  - **Syarat RBR (Demand)**:
-    - Ekor terendah dari Leg-In wajib bersentuhan atau memantul dari zona Demand / Support / FVG di TF M15 atau H1.
-  - **Syarat DBD (Supply)**:
-    - Ekor tertinggi dari Leg-In wajib bersentuhan atau memantul dari zona Supply / Resistance / FVG di TF M15 atau H1.
-  - Jika Leg-In terbentuk di ruang kosong tanpa referensi HTF POI (*No Man's Land*), tidak berhak mendapat poin.
-- **Poin Tambahan**: +1 Poin jika Leg-In berasal dari reaksi HTF POI.
+  - Menghubungkan titik awal Leg-In/Base dengan zona POI di Timeframe Tinggi (M15 / H1) yang dipecah menjadi 2 sub-modul:
+    1. **Sub-Phase 2.4A: HTF RBR/DBD Parent Zone Reaction**:
+       - Menguji apakah dasar/puncak Base berada di dalam atau memantul dari zona RBR/DBD M15 atau H1 yang masih aktif ($Distal_{\text{HTF}} \le Price_{\text{LTF}} \le Proximal_{\text{HTF}} \pm 30\text{ pts}$).
+    2. **Sub-Phase 2.4B: HTF Swing High/Low Structure Reaction**:
+       - Menguji apakah dasar/puncak Base menyentuh atau melakukan *sweep* terhadap titik pivot *Swing Low/High* M15 atau H1 terdekat ($\le 50\text{ pts}$).
+  - Jika Leg-In/Base terbentuk di ruang kosong tanpa referensi HTF POI (*No Man's Land*), tidak berhak mendapat poin.
+- **Poin Tambahan**: +1 Poin jika berasal dari reaksi HTF POI.
 - **🧪 Harapan / Expected Test Result**:
-  - Label info menampilkan: `[HTF POI: M15 Demand Reaction (+1 pt)]` atau `[HTF POI: None (0 pt)]`.
+  - Label info menampilkan: `[HTF: M15 (+1 pt)]`, `[Sw: M15(18pt|+1)]`, atau `[no-HTF / no-Sw (0 pt)]`.
   - Mencegah pola RBR palsu yang terbentuk saat harga sedang terjun bebas di tengah tren bearish HTF.
   - Seluruh zona M1 yang memiliki poin ini terbukti bergerak searah dengan bias institusional HTF.
+
+> 📝 **Engineering Backlog Note (Future HTF Swing Detection Improvements)**:
+> 1. **Current MVP**: Menggunakan *5-Bar Structural Pivot* (2 kiri, 2 kanan) pada M15 & H1 dengan batas toleransi tetap $50$ points ($0.50 pada Gold).
+> 2. **Rencana Peningkatan Mendatang**:
+>    - *Dynamic ATR-based Tolerance*: Mengganti angka statis 50 points dengan kelipatan dinamis $0.3 \times \text{ATR}(\text{HTF})$ agar adaptif di saat pasar sangat volatil vs tenang.
+>    - *Multi-Bar Fractal / Swing Depth Filter*: Menyaring swing minor dengan memeriksa kedalaman *pullback* sebelum swing diakui sebagai *Major Swing Pivot*.
+>    - *Liquidity Sweep Zone Mapping*: Mengidentifikasi sapuan ekor lilin (*wick sweep*) pada *Equal Highs / Equal Lows (EQH/EQL)* HTF sebelum RBR/DBD terpicu.
 
 ---
 

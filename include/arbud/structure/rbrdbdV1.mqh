@@ -1364,6 +1364,17 @@ private:
    //| Phase 2.4B Evaluator: HTF Swing High/Low Structure Reaction       |
    //| Validates if zone base taps or sweeps an established structural   |
    //| pivot high/low on M15 or H1 within tolerance (0 - 50 points)     |
+   //|                                                                  |
+   //| ENGINEERING BACKLOG NOTE (FUTURE SWING DETECTION IMPROVEMENTS):  |
+   //| 1. Current implementation uses standard 5-Bar Structural Pivot   |
+   //|    (2 left, 2 right) with fixed 50 points tolerance.             |
+   //| 2. Backlog Improvements:                                         |
+   //|    a. Multi-Bar Fractal Clearance (e.g. 3-bar or 5-bar left/right|
+   //|       to filter out minor pauses within strong trends).          |
+   //|    b. Dynamic ATR-based Proximity & Sweep Tolerance instead of   |
+   //|       fixed 50 points (adaptive across high/low volatility days).|
+   //|    c. ZigZag-based Swing Wave Engine or Swing Liquidity Pool     |
+   //|       (identifying equal highs/lows and major multi-day pivots). |
    //+------------------------------------------------------------------+
    void EvaluatePhase2_4B_HTFSwingReaction(const string symbol, SRBRDBDArea &area)
    {
