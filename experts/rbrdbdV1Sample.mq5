@@ -22,6 +22,10 @@ input int               InpMaxBaseM1         = 5;                 // Max Base Ca
 input double            InpLegRatioM1        = 1.0;               // Min Leg-Out vs Base Ratio (1.0 = equal)
 input int               InpHistoryBars       = 500;               // History Bars to Scan on Init
 
+input group "=== Phase 2 Modular Testing Switches ==="
+input bool              InpEnablePhase2_1    = false;             // Enable Phase 2.1 (Base Tightness & MTF Refl)
+input bool              InpEnablePhase2_2    = true;              // Enable Phase 2.2 (Origin TF BOS Body Close)
+
 input group "=== Dynamic Memory & Garbage Collection ==="
 input bool              InpEnableGC          = true;              // Enable Dynamic Garbage Collection
 input int               InpMaxMemoryBars     = 1500;              // Max Zone Age in M1 Bars before Purge
@@ -44,6 +48,9 @@ CRBRDBDV1 ExtRBRDBD;
 int OnInit()
 {
    Print("=== [rbrdbdV1Sample] Initializing Pure M1 RBR/DBD Engine ===");
+
+   // 0. Configure Phase 2 Modular Test Switches
+   ExtRBRDBD.SetPhase2Switches(InpEnablePhase2_1, InpEnablePhase2_2);
 
    // 1. Register Main Timeframe: M1
    ExtRBRDBD.RegisterTimeframe(PERIOD_M1, 
@@ -120,15 +127,30 @@ void OnTick()
          if(areas[i].scorePhase2_2 > 0) bosPassed++;
          if(areas[i].totalScore >= 2) highQuality++;
       }
-      Comment(StringFormat("=== RBR/DBD M1 ENGINE (PHASE 2.2) ===\n" +
+
+      string modeHeader;
+      if(!InpEnablePhase2_1 && InpEnablePhase2_2)
+         modeHeader = "=== RBR/DBD ENGINE (PHASE 2.2 ISOLATED: BOS ONLY) ===";
+      else if(InpEnablePhase2_1 && !InpEnablePhase2_2)
+         modeHeader = "=== RBR/DBD ENGINE (PHASE 2.1 ISOLATED: TIGHTNESS ONLY) ===";
+      else
+         modeHeader = "=== RBR/DBD ENGINE (PHASE 2 COMBINED) ===";
+
+      string qualityBreakdown;
+      if(!InpEnablePhase2_1 && InpEnablePhase2_2)
+         qualityBreakdown = StringFormat("BOS Pass Rate: %d / %d Zones (%.1f%%)", bosPassed, total, total > 0 ? (bosPassed * 100.0 / total) : 0.0);
+      else
+         qualityBreakdown = StringFormat("P2.1 (Tight+Refl): %d/%d | P2.2 (Origin BOS): %d/%d | A-Grade (2★): %d/%d", 
+                                         p21Passed, total, bosPassed, total, highQuality, total);
+
+      Comment(StringFormat("%s\n" +
                            "Total Zones: %d | Active: %d | Escalated (M3/M5): %d\n" +
-                           "Phase 2.1 (Tight+Refl): %d / %d | Phase 2.2 (Origin BOS): %d / %d\n" +
-                           "High Quality (2★ A-Grade): %d / %d Zones\n" +
+                           "%s\n" +
                            "Garbage Collection: %s (MaxBars: %d, DistMult: %.1f)\n" +
                            "Live Bid: %.2f | Ask: %.2f",
+                           modeHeader,
                            total, active, escalated,
-                           p21Passed, total, bosPassed, total,
-                           highQuality, total,
+                           qualityBreakdown,
                            InpEnableGC ? "ENABLED" : "DISABLED", InpMaxMemoryBars, InpPurgeDistMult,
                            bid, ask));
    }

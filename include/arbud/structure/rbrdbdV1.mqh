@@ -141,11 +141,28 @@ private:
    int                  m_totalTFs;
    string               m_objPrefix;
 
+   // Phase 2 Modular Test Switches (Default true)
+   bool                 m_enablePhase2_1; // Base Tightness & MTF Reflection
+   bool                 m_enablePhase2_2; // Origin TF BOS / ChoCH Body Close
+
 public:
-   CRBRDBDV1() : m_totalTFs(0), m_objPrefix("RBRDBD_")
+   CRBRDBDV1() : m_totalTFs(0), m_objPrefix("RBRDBD_"),
+                 m_enablePhase2_1(true), m_enablePhase2_2(true)
    {
       ArrayResize(m_tfList, 0);
    }
+
+   //+------------------------------------------------------------------+
+   //| Configure Phase 2 Modular Test Switches                          |
+   //+------------------------------------------------------------------+
+   void SetPhase2Switches(const bool enablePhase2_1, const bool enablePhase2_2)
+   {
+      m_enablePhase2_1 = enablePhase2_1;
+      m_enablePhase2_2 = enablePhase2_2;
+   }
+
+   bool GetPhase2_1Enabled() const { return m_enablePhase2_1; }
+   bool GetPhase2_2Enabled() const { return m_enablePhase2_2; }
 
    ~CRBRDBDV1()
    {
@@ -696,12 +713,25 @@ private:
       data.areas[size].isInvalid         = false;
 
       // --- PHASE 2.1: Base Tightness & MTF Reflection Evaluator ---
-      EvaluatePhase2_1_TightnessAndReflection(symbol, data.areas[size], outRange, baseRange);
+      if(m_enablePhase2_1)
+         EvaluatePhase2_1_TightnessAndReflection(symbol, data.areas[size], outRange, baseRange);
+      else
+      {
+         data.areas[size].passBaseTightness = false;
+         data.areas[size].passMTFReflection = false;
+         data.areas[size].scorePhase2_1     = 0;
+      }
 
       // --- PHASE 2.2: BOS / ChoCH Wajib Body Close on Origin Timeframe ---
-      EvaluatePhase2_2_BOS(symbol, data.areas[size]);
+      if(m_enablePhase2_2)
+         EvaluatePhase2_2_BOS(symbol, data.areas[size]);
+      else
+      {
+         data.areas[size].passBOS       = false;
+         data.areas[size].scorePhase2_2 = 0;
+      }
 
-      // Phase 2 Total Score Accumulator
+      // Phase 2 Total Score Accumulator (Sums active modules)
       data.areas[size].totalScore = data.areas[size].scorePhase2_1 + data.areas[size].scorePhase2_2;
 
       string lbl = (type == RBRDBD_RBR) ? "RBR" : "DBD";
@@ -1126,20 +1156,40 @@ private:
          else
             cInfo = StringFormat("%dC", area.baseCandleCount);
 
-         // Phase 2 Quality Score Info
-         // Shows e.g. "T:M3" (if Tight+Refl passed) and "BOS" (if BOS passed)
-         string qInfo = "";
-         if(area.scorePhase2_1 > 0)
-            qInfo += "T:" + GetTFShortName(area.reflTF) + " ";
-         if(area.scorePhase2_2 > 0)
-            qInfo += "BOS ";
-
-         if(StringLen(qInfo) > 0)
-            StringTrimRight(qInfo);
+         // Phase 2 Quality Score Info (Adaptive to Active Switches)
+         string scoreStr = "";
+         if(m_enablePhase2_1 && !m_enablePhase2_2)
+         {
+            // Pure Phase 2.1 Test Mode
+            if(area.scorePhase2_1 > 0)
+               scoreStr = StringFormat("T:%s (+1pt)", GetTFShortName(area.reflTF));
+            else
+               scoreStr = "no-Tight (0pt)";
+         }
+         else if(!m_enablePhase2_1 && m_enablePhase2_2)
+         {
+            // Pure Phase 2.2 Test Mode (Isolated BOS test)
+            if(area.scorePhase2_2 > 0)
+               scoreStr = "BOS (+1pt)";
+            else
+               scoreStr = "no-BOS (0pt)";
+         }
          else
-            qInfo = "raw";
+         {
+            // Combined Phase 2 Mode
+            string qInfo = "";
+            if(area.scorePhase2_1 > 0)
+               qInfo += "T:" + GetTFShortName(area.reflTF) + " ";
+            if(area.scorePhase2_2 > 0)
+               qInfo += "BOS ";
 
-         string scoreStr = StringFormat("%s|%d★", qInfo, area.totalScore);
+            if(StringLen(qInfo) > 0)
+               StringTrimRight(qInfo);
+            else
+               qInfo = "raw";
+
+            scoreStr = StringFormat("%s|%d★", qInfo, area.totalScore);
+         }
 
          // Retest/Status info
          string statusStr;
@@ -1150,7 +1200,7 @@ private:
          else
             statusStr = "Fresh";
 
-         // Combined concise label: e.g. " M1 RBR [2C|T:M3 BOS|2★] • Fresh"
+         // Combined concise label: e.g. " M1 RBR [2C|BOS (+1pt)] • Fresh"
          string finalLabel = StringFormat(" %s %s [%s|%s] • %s", tfStr, typeStr, cInfo, scoreStr, statusStr);
 
          // High-contrast text color & positioning
