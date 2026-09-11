@@ -336,6 +336,38 @@ public:
    }
 
    //+------------------------------------------------------------------+
+   //| Convert ENUM_TIMEFRAMES to clean concise short name              |
+   //+------------------------------------------------------------------+
+   static string GetTFShortName(const ENUM_TIMEFRAMES tf)
+   {
+      switch(tf)
+      {
+         case PERIOD_M1:  return "M1";
+         case PERIOD_M2:  return "M2";
+         case PERIOD_M3:  return "M3";
+         case PERIOD_M4:  return "M4";
+         case PERIOD_M5:  return "M5";
+         case PERIOD_M6:  return "M6";
+         case PERIOD_M10: return "M10";
+         case PERIOD_M12: return "M12";
+         case PERIOD_M15: return "M15";
+         case PERIOD_M20: return "M20";
+         case PERIOD_M30: return "M30";
+         case PERIOD_H1:  return "H1";
+         case PERIOD_H2:  return "H2";
+         case PERIOD_H3:  return "H3";
+         case PERIOD_H4:  return "H4";
+         case PERIOD_H6:  return "H6";
+         case PERIOD_H8:  return "H8";
+         case PERIOD_H12: return "H12";
+         case PERIOD_D1:  return "D1";
+         case PERIOD_W1:  return "W1";
+         case PERIOD_MN1: return "MN";
+         default:         return "TF";
+      }
+   }
+
+   //+------------------------------------------------------------------+
    //| Get count of active/valid (unmitigated) areas                    |
    //+------------------------------------------------------------------+
    int GetValidAreasCount(const ENUM_TIMEFRAMES tf)
@@ -960,36 +992,35 @@ private:
          ObjectSetInteger(0, rectName, OBJPROP_SELECTABLE, false);
          ObjectSetInteger(0, rectName, OBJPROP_STYLE, area.isInvalid ? STYLE_DOT : STYLE_SOLID);
 
-         // Format status text
+         // Format status text concisely
          string typeStr = (area.type == RBRDBD_RBR) ? "RBR" : "DBD";
-         string tfStr   = EnumToString(area.period);
-         string baseInfo;
+         string tfStr   = GetTFShortName(area.period);
+
+         // Base candle info
+         string cInfo;
          if(area.isEscalated)
-            baseInfo = StringFormat("[%d C in %s (M1: %d C)]", area.baseCandleCount, tfStr, area.m1BaseCandleCount);
+            cInfo = StringFormat("%dC(M1:%d)", area.baseCandleCount, area.m1BaseCandleCount);
          else
-            baseInfo = StringFormat("[%d C]", area.baseCandleCount);
+            cInfo = StringFormat("%dC", area.baseCandleCount);
 
-         // Phase 2.1 Score Info
-         string scoreStr = "";
+         // Phase 2.1 Score info
+         string scoreStr;
          if(area.scorePhase2_1 > 0)
-         {
-            string reflName = EnumToString(area.reflTF);
-            scoreStr = StringFormat(" [Tight:PASS Refl:%s (%dC) (+1pt)]", reflName, area.reflCandleCount);
-         }
+            scoreStr = StringFormat("+1pt[%s]", GetTFShortName(area.reflTF));
          else
-         {
-            string tFail = area.passBaseTightness ? "Tight:PASS" : "Tight:FAIL";
-            string rFail = area.passMTFReflection ? "Refl:PASS" : "Refl:FAIL";
-            scoreStr = StringFormat(" [%s %s (0pt)]", tFail, rFail);
-         }
+            scoreStr = "0pt";
 
+         // Retest/Status info
          string statusStr;
          if(area.isInvalid)
-            statusStr = StringFormat(" %s %s %s%s (100%% Mitigated)", tfStr, typeStr, baseInfo, scoreStr);
+            statusStr = "100% Mit";
          else if(area.consumptionPct > 0.0)
-            statusStr = StringFormat(" %s %s %s%s (%.1f%% Retested)", tfStr, typeStr, baseInfo, scoreStr, area.consumptionPct);
+            statusStr = StringFormat("%.1f%%", area.consumptionPct);
          else
-            statusStr = StringFormat(" %s %s %s%s (Fresh)", tfStr, typeStr, baseInfo, scoreStr);
+            statusStr = "Fresh";
+
+         // Combined concise label: e.g. " M1 RBR [2C|+1pt[M3]] • Fresh"
+         string finalLabel = StringFormat(" %s %s [%s|%s] • %s", tfStr, typeStr, cInfo, scoreStr, statusStr);
 
          // Draw / Update Text (pinned to baseStart)
          if(ObjectFind(0, textName) < 0)
@@ -1000,7 +1031,7 @@ private:
          {
             ObjectMove(0, textName, 0, area.baseStart, topPrice);
          }
-         ObjectSetString(0, textName, OBJPROP_TEXT, statusStr);
+         ObjectSetString(0, textName, OBJPROP_TEXT, finalLabel);
          ObjectSetInteger(0, textName, OBJPROP_COLOR, clr);
          ObjectSetInteger(0, textName, OBJPROP_FONTSIZE, 8);
          ObjectSetString(0, textName, OBJPROP_FONT, "Arial Bold");
