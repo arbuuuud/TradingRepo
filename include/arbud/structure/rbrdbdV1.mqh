@@ -988,7 +988,7 @@ private:
          }
          ObjectSetInteger(0, rectName, OBJPROP_COLOR, clr);
          ObjectSetInteger(0, rectName, OBJPROP_FILL, true);
-         ObjectSetInteger(0, rectName, OBJPROP_BACK, false);
+         ObjectSetInteger(0, rectName, OBJPROP_BACK, true); // Put rectangle in background so candlesticks and text stay on top
          ObjectSetInteger(0, rectName, OBJPROP_SELECTABLE, false);
          ObjectSetInteger(0, rectName, OBJPROP_STYLE, area.isInvalid ? STYLE_DOT : STYLE_SOLID);
 
@@ -1022,20 +1022,40 @@ private:
          // Combined concise label: e.g. " M1 RBR [2C|+1pt[M3]] • Fresh"
          string finalLabel = StringFormat(" %s %s [%s|%s] • %s", tfStr, typeStr, cInfo, scoreStr, statusStr);
 
-         // Draw / Update Text (pinned to baseStart)
-         if(ObjectFind(0, textName) < 0)
+         // High-contrast text color & positioning
+         // For RBR (Demand): place text slightly below bottom edge
+         // For DBD (Supply): place text slightly above top edge
+         double textPrice;
+         ENUM_ANCHOR_POINT anchor;
+         color labelClr = clrWhite; // High-contrast clean white
+
+         double offset = MathMax(area.zoneHeight * 0.15, 10.0 * _Point);
+         if(area.type == RBRDBD_RBR)
          {
-            ObjectCreate(0, textName, OBJ_TEXT, 0, area.baseStart, topPrice);
+            textPrice = botPrice - offset;
+            anchor    = ANCHOR_LEFT_UPPER; // Anchor from top of text downwards
          }
          else
          {
-            ObjectMove(0, textName, 0, area.baseStart, topPrice);
+            textPrice = topPrice + offset;
+            anchor    = ANCHOR_LEFT_LOWER; // Anchor from bottom of text upwards
+         }
+
+         // Draw / Update Text
+         if(ObjectFind(0, textName) < 0)
+         {
+            ObjectCreate(0, textName, OBJ_TEXT, 0, area.baseStart, textPrice);
+         }
+         else
+         {
+            ObjectMove(0, textName, 0, area.baseStart, textPrice);
          }
          ObjectSetString(0, textName, OBJPROP_TEXT, finalLabel);
-         ObjectSetInteger(0, textName, OBJPROP_COLOR, clr);
+         ObjectSetInteger(0, textName, OBJPROP_COLOR, labelClr);
+         ObjectSetInteger(0, textName, OBJPROP_ANCHOR, anchor);
          ObjectSetInteger(0, textName, OBJPROP_FONTSIZE, 8);
          ObjectSetString(0, textName, OBJPROP_FONT, "Arial Bold");
-         ObjectSetInteger(0, textName, OBJPROP_BACK, false);
+         ObjectSetInteger(0, textName, OBJPROP_BACK, false); // Keep text explicitly in foreground
       }
 
       ChartRedraw(0);
