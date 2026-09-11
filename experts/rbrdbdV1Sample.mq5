@@ -111,20 +111,24 @@ void OnTick()
    if(ExtRBRDBD.GetAreas(PERIOD_M1, areas))
    {
       int total = ArraySize(areas);
-      int active = 0, escalated = 0, p21Passed = 0;
+      int active = 0, escalated = 0, p21Passed = 0, bosPassed = 0, highQuality = 0;
       for(int i = 0; i < total; i++)
       {
          if(!areas[i].isInvalid) active++;
          if(areas[i].isEscalated) escalated++;
          if(areas[i].scorePhase2_1 > 0) p21Passed++;
+         if(areas[i].scorePhase2_2 > 0) bosPassed++;
+         if(areas[i].totalScore >= 2) highQuality++;
       }
-      Comment(StringFormat("=== RBR/DBD M1 ENGINE (PHASE 2.1) ===\n" +
+      Comment(StringFormat("=== RBR/DBD M1 ENGINE (PHASE 2.2) ===\n" +
                            "Total Zones: %d | Active: %d | Escalated (M3/M5): %d\n" +
-                           "Phase 2.1 Quality: %d / %d Zones Passed Tightness & Refl (+1pt)\n" +
+                           "Phase 2.1 (Tight+Refl): %d / %d | Phase 2.2 (Origin BOS): %d / %d\n" +
+                           "High Quality (2★ A-Grade): %d / %d Zones\n" +
                            "Garbage Collection: %s (MaxBars: %d, DistMult: %.1f)\n" +
                            "Live Bid: %.2f | Ask: %.2f",
                            total, active, escalated,
-                           p21Passed, total,
+                           p21Passed, total, bosPassed, total,
+                           highQuality, total,
                            InpEnableGC ? "ENABLED" : "DISABLED", InpMaxMemoryBars, InpPurgeDistMult,
                            bid, ask));
    }

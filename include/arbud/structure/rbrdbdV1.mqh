@@ -47,6 +47,12 @@ struct SRBRDBDArea
    ENUM_TIMEFRAMES   reflTF;           // Timeframe that confirmed clean reflection
    int               reflCandleCount;  // Number of clean candles in reflTF
    int               scorePhase2_1;    // +1 Point if both pass, 0 otherwise
+
+   // Phase 2.2: BOS / ChoCH Wajib Body Close on Zone Origin Timeframe
+   bool              passBOS;          // True if Leg-Out closed body beyond previous swing
+   double            bosBrokenLevel;   // Price level of the broken swing high/low
+   int               scorePhase2_2;    // +1 Point if passBOS is true, 0 otherwise
+
    int               totalScore;       // Phase 2 total score accumulator (0 to 5)
 
    void Init()
@@ -73,6 +79,11 @@ struct SRBRDBDArea
       reflTF            = PERIOD_CURRENT;
       reflCandleCount   = 0;
       scorePhase2_1     = 0;
+
+      passBOS           = false;
+      bosBrokenLevel    = 0.0;
+      scorePhase2_2     = 0;
+
       totalScore        = 0;
    }
 };
@@ -687,6 +698,12 @@ private:
       // --- PHASE 2.1: Base Tightness & MTF Reflection Evaluator ---
       EvaluatePhase2_1_TightnessAndReflection(symbol, data.areas[size], outRange, baseRange);
 
+      // --- PHASE 2.2: BOS / ChoCH Wajib Body Close on Origin Timeframe ---
+      EvaluatePhase2_2_BOS(symbol, data.areas[size]);
+
+      // Phase 2 Total Score Accumulator
+      data.areas[size].totalScore = data.areas[size].scorePhase2_1 + data.areas[size].scorePhase2_2;
+
       string lbl = (type == RBRDBD_RBR) ? "RBR" : "DBD";
       data.areas[size].objName = m_objPrefix + EnumToString(finalPeriod) + "_" + lbl + "_" + TimeToString(bStart, TIME_DATE|TIME_MINUTES);
    }
@@ -782,8 +799,114 @@ private:
       {
          area.scorePhase2_1 = 0;
       }
+   }
 
-      area.totalScore = area.scorePhase2_1;
+   //+------------------------------------------------------------------+
+   //| Phase 2.2 Evaluator: BOS / ChoCH Wajib Body Close on Origin TF   |
+   //| Evaluates swing level matching the zone's origin period          |
+   //+------------------------------------------------------------------+
+   void EvaluatePhase2_2_BOS(const string symbol, SRBRDBDArea &area)
+   {
+      area.passBOS        = false;
+      area.bosBrokenLevel = 0.0;
+      area.scorePhase2_2  = 0;
+
+      ENUM_TIMEFRAMES tf = area.period;
+      if(tf <= 0) tf = PERIOD_CURRENT;
+
+      // Find bar shifts on origin timeframe
+      int legOutBar   = iBarShift(symbol, tf, area.legOutTime, false);
+      int baseStartBar = iBarShift(symbol, tf, area.baseStart, false);
+      if(legOutBar < 0 || baseStartBar < 0) return;
+
+      // Copy Leg-Out candle to verify Body Close
+      MqlRates outRates[];
+      ArraySetAsSeries(outRates, true);
+      if(CopyRates(symbol, tf, legOutBar, 1, outRates) < 1) return;
+      double legOutClose = outRates[0].close;
+      double legOutHigh  = outRates[0].high;
+      double legOutLow   = outRates[0].low;
+
+      // Scan prior swings: lookback window before baseStartBar on origin TF
+      int lookback = 30;
+      int startSearchBar = baseStartBar + 1; // Prior to base start
+
+      MqlRates priorRates[];
+      ArraySetAsSeries(priorRates, true);
+      int copied = CopyRates(symbol, tf, startSearchBar, lookback, priorRates);
+      if(copied < 3) return;
+
+      if(area.type == RBRDBD_RBR)
+      {
+         // Find recent Swing High prior to base
+         // 1. First priority: look for a fractal peak (high[i] > high[i-1] && high[i] > high[i+1])
+         double swingHigh = 0.0;
+         for(int i = 1; i < copied - 1; i++)
+         {
+            if(priorRates[i].high >= priorRates[i-1].high && priorRates[i].high >= priorRates[i+1].high)
+            {
+               if(priorRates[i].high > swingHigh)
+                  swingHigh = priorRates[i].high;
+               break; // Found nearest prominent swing high!
+            }
+         }
+
+         // Fallback: if no 3-bar fractal peak, take the absolute highest high in the lookback
+         if(swingHigh <= 0.0)
+         {
+            for(int i = 0; i < copied; i++)
+            {
+               if(priorRates[i].high > swingHigh)
+                  swingHigh = priorRates[i].high;
+            }
+         }
+
+         area.bosBrokenLevel = swingHigh;
+
+         // Validation: Wajib Body Close (Close > SwingHigh)
+         // Wick sweep (High > SwingHigh but Close <= SwingHigh) rejected as fakeout!
+         if(swingHigh > 0.0 && legOutClose > swingHigh)
+         {
+            area.passBOS       = true;
+            area.scorePhase2_2 = 1;
+         }
+      }
+      else if(area.type == RBRDBD_DBD)
+      {
+         // Find recent Swing Low prior to base
+         // 1. First priority: look for a fractal trough (low[i] <= low[i-1] && low[i] <= low[i+1])
+         double swingLow = 0.0;
+         for(int i = 1; i < copied - 1; i++)
+         {
+            if(priorRates[i].low <= priorRates[i-1].low && priorRates[i].low <= priorRates[i+1].low)
+            {
+               if(swingLow <= 0.0 || priorRates[i].low < swingLow)
+                  swingLow = priorRates[i].low;
+               break; // Found nearest prominent swing low!
+            }
+         }
+
+         // Fallback: if no 3-bar fractal trough, take the absolute lowest low in the lookback
+         if(swingLow <= 0.0)
+         {
+            swingLow = priorRates[0].low;
+            for(int i = 1; i < copied; i++)
+            {
+               if(priorRates[i].low < swingLow)
+                  swingLow = priorRates[i].low;
+            }
+         }
+
+         area.bosBrokenLevel = swingLow;
+
+         // Validation: Wajib Body Close (Close < SwingLow)
+         // Wick sweep (Low < SwingLow but Close >= SwingLow) rejected as fakeout!
+         if(swingLow > 0.0 && legOutClose < swingLow)
+         {
+            area.passBOS       = true;
+            area.scorePhase2_2 = 1;
+         }
+      }
    }
 
    //+------------------------------------------------------------------+
@@ -1003,12 +1126,20 @@ private:
          else
             cInfo = StringFormat("%dC", area.baseCandleCount);
 
-         // Phase 2.1 Score info
-         string scoreStr;
+         // Phase 2 Quality Score Info
+         // Shows e.g. "T:M3" (if Tight+Refl passed) and "BOS" (if BOS passed)
+         string qInfo = "";
          if(area.scorePhase2_1 > 0)
-            scoreStr = StringFormat("+1pt[%s]", GetTFShortName(area.reflTF));
+            qInfo += "T:" + GetTFShortName(area.reflTF) + " ";
+         if(area.scorePhase2_2 > 0)
+            qInfo += "BOS ";
+
+         if(StringLen(qInfo) > 0)
+            StringTrimRight(qInfo);
          else
-            scoreStr = "0pt";
+            qInfo = "raw";
+
+         string scoreStr = StringFormat("%s|%d★", qInfo, area.totalScore);
 
          // Retest/Status info
          string statusStr;
@@ -1019,7 +1150,7 @@ private:
          else
             statusStr = "Fresh";
 
-         // Combined concise label: e.g. " M1 RBR [2C|+1pt[M3]] • Fresh"
+         // Combined concise label: e.g. " M1 RBR [2C|T:M3 BOS|2★] • Fresh"
          string finalLabel = StringFormat(" %s %s [%s|%s] • %s", tfStr, typeStr, cInfo, scoreStr, statusStr);
 
          // High-contrast text color & positioning
