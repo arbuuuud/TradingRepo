@@ -51,6 +51,7 @@ struct SRBRDBDArea
    // Phase 2.2: BOS / ChoCH Wajib Body Close on Zone Origin Timeframe
    bool              passBOS;          // True if Leg-Out closed body beyond previous swing
    double            bosBrokenLevel;   // Price level of the broken swing high/low
+   datetime          bosSwingTime;     // Time of the swing high/low bar
    int               scorePhase2_2;    // +1 Point if passBOS is true, 0 otherwise
 
    int               totalScore;       // Phase 2 total score accumulator (0 to 5)
@@ -82,6 +83,7 @@ struct SRBRDBDArea
 
       passBOS           = false;
       bosBrokenLevel    = 0.0;
+      bosSwingTime      = 0;
       scorePhase2_2     = 0;
 
       totalScore        = 0;
@@ -337,6 +339,7 @@ public:
                // Delete chart visual objects cleanly
                ObjectDelete(0, m_tfList[i].areas[a].objName);
                ObjectDelete(0, m_tfList[i].areas[a].objName + "_lbl");
+               ObjectDelete(0, m_tfList[i].areas[a].objName + "_bos");
 
                // Shift array to remove element
                int total = ArraySize(m_tfList[i].areas);
@@ -871,12 +874,13 @@ private:
          // Find recent Swing High prior to base
          // 1. First priority: look for a fractal peak (high[i] > high[i-1] && high[i] > high[i+1])
          double swingHigh = 0.0;
+         datetime sTime   = 0;
          for(int i = 1; i < copied - 1; i++)
          {
             if(priorRates[i].high >= priorRates[i-1].high && priorRates[i].high >= priorRates[i+1].high)
             {
-               if(priorRates[i].high > swingHigh)
-                  swingHigh = priorRates[i].high;
+               swingHigh = priorRates[i].high;
+               sTime     = priorRates[i].time;
                break; // Found nearest prominent swing high!
             }
          }
@@ -887,11 +891,15 @@ private:
             for(int i = 0; i < copied; i++)
             {
                if(priorRates[i].high > swingHigh)
+               {
                   swingHigh = priorRates[i].high;
+                  sTime     = priorRates[i].time;
+               }
             }
          }
 
          area.bosBrokenLevel = swingHigh;
+         area.bosSwingTime   = sTime;
 
          // Validation: Wajib Body Close (Close > SwingHigh)
          // Wick sweep (High > SwingHigh but Close <= SwingHigh) rejected as fakeout!
@@ -906,12 +914,13 @@ private:
          // Find recent Swing Low prior to base
          // 1. First priority: look for a fractal trough (low[i] <= low[i-1] && low[i] <= low[i+1])
          double swingLow = 0.0;
+         datetime sTime  = 0;
          for(int i = 1; i < copied - 1; i++)
          {
             if(priorRates[i].low <= priorRates[i-1].low && priorRates[i].low <= priorRates[i+1].low)
             {
-               if(swingLow <= 0.0 || priorRates[i].low < swingLow)
-                  swingLow = priorRates[i].low;
+               swingLow = priorRates[i].low;
+               sTime    = priorRates[i].time;
                break; // Found nearest prominent swing low!
             }
          }
@@ -920,14 +929,19 @@ private:
          if(swingLow <= 0.0)
          {
             swingLow = priorRates[0].low;
+            sTime    = priorRates[0].time;
             for(int i = 1; i < copied; i++)
             {
                if(priorRates[i].low < swingLow)
+               {
                   swingLow = priorRates[i].low;
+                  sTime    = priorRates[i].time;
+               }
             }
          }
 
          area.bosBrokenLevel = swingLow;
+         area.bosSwingTime   = sTime;
 
          // Validation: Wajib Body Close (Close < SwingLow)
          // Wick sweep (Low < SwingLow but Close >= SwingLow) rejected as fakeout!
@@ -1237,6 +1251,34 @@ private:
          ObjectSetInteger(0, textName, OBJPROP_FONTSIZE, 8);
          ObjectSetString(0, textName, OBJPROP_FONT, "Arial Bold");
          ObjectSetInteger(0, textName, OBJPROP_BACK, false); // Keep text explicitly in foreground
+
+         // Draw / Update BOS Horizontal Swing Reference Line (if BOS is passed and enabled)
+         string bosLineName = rectName + "_bos";
+         if(m_enablePhase2_2 && area.passBOS && area.bosBrokenLevel > 0.0 && area.bosSwingTime > 0)
+         {
+            datetime bosEndTime = area.legOutTime;
+            if(bosEndTime <= area.bosSwingTime) bosEndTime = area.baseEnd;
+
+            if(ObjectFind(0, bosLineName) < 0)
+            {
+               ObjectCreate(0, bosLineName, OBJ_TREND, 0, area.bosSwingTime, area.bosBrokenLevel, bosEndTime, area.bosBrokenLevel);
+            }
+            else
+            {
+               ObjectMove(0, bosLineName, 0, area.bosSwingTime, area.bosBrokenLevel);
+               ObjectMove(0, bosLineName, 1, bosEndTime, area.bosBrokenLevel);
+            }
+            ObjectSetInteger(0, bosLineName, OBJPROP_COLOR, (area.type == RBRDBD_RBR) ? clrAqua : clrOrangeRed);
+            ObjectSetInteger(0, bosLineName, OBJPROP_STYLE, STYLE_DASH);
+            ObjectSetInteger(0, bosLineName, OBJPROP_WIDTH, 1);
+            ObjectSetInteger(0, bosLineName, OBJPROP_RAY_RIGHT, false);
+            ObjectSetInteger(0, bosLineName, OBJPROP_BACK, true);
+         }
+         else
+         {
+            if(ObjectFind(0, bosLineName) >= 0)
+               ObjectDelete(0, bosLineName);
+         }
       }
 
       ChartRedraw(0);
