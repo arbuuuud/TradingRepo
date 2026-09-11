@@ -30,8 +30,7 @@ Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke 
        ├─► Phase 2.1: Base Tightness & MTF Reflection (M5/M15)
        ├─► Phase 2.2: BOS / ChoCH Wajib Body Close
        ├─► Phase 2.3: Direct Attached FVG (Magnet Retest)
-       ├─► Phase 2.4: HTF POI Reaction (Anti-No Man's Land)
-       └─► Phase 2.5: Liquidity Sweep & Big Figure ($xx00, $xx50)
+       └─► Phase 2.4: HTF POI Reaction (Anti-No Man's Land: Parent Zone & Structure Swing)
        │
        ▼
 [ PHASE 3: Dynamic Buffer Calculation (10-Candle Swing vs 2x Base) ]
@@ -170,29 +169,14 @@ Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke 
 
 ---
 
-#### 🔸 Phase 2.5: Liquidity Sweep & Big Figure Confluence ($xx00, $xx50)
-- **Logika Matematis**:
-  - **Level Psikologis Bulat (*Big Figure*)**: Kelipatan `$10.0` (misal 2650.00, 2660.00) dan `$50.0` (2600.00, 2650.00, 2700.00).
-  - **Pemeriksaan Sweep**:
-    - Apakah candle Base pernah menembus level psikologis bulat tersebut atau menembus Equal Highs / Equal Lows (EQH/EQL) di sebelah kirinya dengan ekor wick, lalu kembali ditutup di dalam Base sebelum Leg-Out meledak?
-    - Jika **YA**: Telah terjadi pembersihan likuiditas (*Stop Hunt completed*).
-    - Jika **TIDAK** (Base hanya menempel pasrah tepat di atas/bawah angka bulat): Sangat rawan jebakan stop hunt.
-- **Poin Tambahan**: +1 Poin jika terjadi valid sweep pada level bulat atau EQH/EQL.
-- **🧪 Harapan / Expected Test Result**:
-  - Label info menampilkan: `[Sweep: Confirmed at 2650.00 (+1 pt)]`.
-  - Terhindar dari zona jebakan di angka bulat yang sering kali dihantam tembus oleh pergerakan manipulasi London/NY open.
-  - Respon harga begitu kembali ke zona ini menghasilkan reaksi cepat (*instant bounce*).
-
----
-
 #### 🔸 Phase 2 Final Aggregator: Pemetaan Skor Strength (0, 1, 2)
-Akumulasi total poin ($0 - 5$) dipetakan menjadi tingkatan kekuatan resmi:
+Akumulasi total poin ($0 - 4$) dipetakan menjadi tingkatan kekuatan resmi:
 
 | Total Poin | Skor Strength | Label Visual di Chart | Warna Visual Border / Teks | Perlakuan Eksekusi |
 |:---:|:---:|:---:|:---:|---|
 | **0 – 1 Poin** | **Strength 0** | `M1 RBR/DBD [Str 0: WEAK]` | Abu-abu / Netral | **Diabaikan** untuk grid order, atau hanya sebagai zona referensi pasif. |
-| **2 – 3 Poin** | **Strength 1** | `M1 RBR/DBD [Str 1: MODERATE]` | Biru / Cokelat Muda | **Trading Normal**: Membuka grid limit dengan alokasi lot terukur. |
-| **4 – 5 Poin** | **Strength 2** | `M1 RBR/DBD [Str 2: HIGH-PROB / A+]` | Emas (*Gold*) / Tebal Menyala | **A+ Setup Prioritas**: Alokasi grid penuh dengan tingkat keyakinan maksimal. |
+| **2 Poin** | **Strength 1** | `M1 RBR/DBD [Str 1: MODERATE]` | Biru / Cokelat Muda | **Trading Normal**: Membuka grid limit dengan alokasi lot terukur. |
+| **3 – 4 Poin** | **Strength 2** | `M1 RBR/DBD [Str 2: HIGH-PROB / A+]` | Emas (*Gold*) / Tebal Menyala | **A+ Setup Prioritas**: Alokasi grid penuh dengan tingkat keyakinan maksimal. |
 
 **🧪 Harapan Akhir Phase 2**:
 - Di chart MT5, setiap kotak RBR/DBD memiliki identitas visual instan berdasarkan kekuatannya (Str 0, Str 1, Str 2).
