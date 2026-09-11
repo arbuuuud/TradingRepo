@@ -245,6 +245,13 @@ Status kelelahan dipantau independen untuk **Buy Area** dan **Sell Area**:
   - `TradingArea #ID | Buy Exhaustion: Level [0-5] (X%) | Sell Exhaustion: Level [0-5] (Y%) | Floor Str: [0-2] | Roof Str: [0-2]`.
 - Saat harga bergerak naik/turun mengikis area, angka persentase dan level kelelahan langsung naik secara presisi (*one-way ratchet*: tidak bisa turun kembali ke level 0 jika sudah tertembus).
 
+#### 📝 Catatan Engineering Backlog (Future Improvement untuk Range TradingArea):
+- **Temuan Saat Ini**: Range TradingArea kadang terlalu lebar (misal ketika salah satu sisi menggunakan proyeksi Daily ATR atau ketika jarak antara Floor dan Roof yang terbentuk terpisah sangat jauh). Akibatnya, sub-area transaksi $0-25\%$ dan $75-100\%$ menjadi terlalu tebal, dan jarak Hard SL $30\%$ menjadi relatif jauh.
+- **Rencana Peningkatan / Refinement ke Depan**:
+  1. **Dynamic Range Clamping**: Membatasi rentang maksimal TradingArea (misal $\text{MaxRange} = \min(\text{RawRange}, 1.5 \times \text{ATR}_{14}\text{ M15})$) agar koridor lebih kompak (*tight* dan terukur).
+  2. **Proximity-Based Filtering**: Mengutamakan hanya RBR/DBD yang berjarak wajar dari harga berjalan (misal $\le N$ points) atau memakai Base Structure M5/M15 lokal sebagai batas atap/lantai minor.
+  3. **Zone-Bound Sub-Area**: Membatasi area transaksi Buy/Sell hanya setebal zona RBR/DBD aslinya (+ buffer), bukan murni $25\%$ dari total range raksasa jika range sedang sangat lebar.
+
 ---
 
 ### 🔹 PHASE 5: Agent Proactive Limit Order Placer (Dynamic Grid & Fresh Depth Mapping)
