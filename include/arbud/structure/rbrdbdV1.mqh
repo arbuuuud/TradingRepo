@@ -451,13 +451,13 @@ private:
    //+------------------------------------------------------------------+
    void DetectPatternAtBar(const string symbol, const MqlRates &rates[], const int totalRates, const int outIdx, STimeframeRBRDBDData &data)
    {
-      // 1. Evaluate Leg-Out Candle (Strong impulsive candle)
+      // 1. Evaluate Leg-Out Candle (Impulsive candle)
       double outBody  = MathAbs(rates[outIdx].close - rates[outIdx].open);
       double outRange = rates[outIdx].high - rates[outIdx].low;
       if(outRange <= 0.0) return;
 
-      // Leg-Out body must dominate candle (>= 50% solid body)
-      if((outBody / outRange) < 0.50) return;
+      // Leg-Out body must dominate candle (>= 40% solid body for Gold M1)
+      if((outBody / outRange) < 0.40) return;
 
       bool outBullish = (rates[outIdx].close > rates[outIdx].open);
       bool outBearish = (rates[outIdx].close < rates[outIdx].open);
@@ -515,11 +515,16 @@ private:
          double inRange = rates[legInIdx].high - rates[legInIdx].low;
          if(inRange <= 0.0) continue;
 
-         // Leg-In body must also be solid (>= 50%)
-         if((inBody / inRange) < 0.50) continue;
+         // Leg-In body must also be solid (>= 40%)
+         if((inBody / inRange) < 0.40) continue;
 
          bool inBullish = (rates[legInIdx].close > rates[legInIdx].open);
          bool inBearish = (rates[legInIdx].close < rates[legInIdx].open);
+
+         // In series array: rates[baseEnd] is the oldest candle of the base (startTime)
+         // rates[baseStart] is the newest candle of the base (endTime)
+         datetime bStartTime = rates[baseEnd].time;
+         datetime bEndTime   = rates[baseStart].time;
 
          // === PATTERN A: RBR (Bullish Leg-In + Base + Bullish Leg-Out breaking Base High) ===
          if(inBullish && outBullish && rates[outIdx].close > baseHigh)
@@ -527,7 +532,7 @@ private:
             if(baseLen <= data.maxBaseCandles)
             {
                // Standard Base within limits
-               RegisterNewArea(data, RBRDBD_RBR, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
+               RegisterNewArea(data, RBRDBD_RBR, bStartTime, bEndTime, rates[outIdx].time,
                                baseHigh, baseLow, baseLen, data.tf, false, baseLen);
                return;
             }
@@ -536,10 +541,10 @@ private:
                // Base > maxBaseCandles in M1: Attempt Recursive MTF Escalation to 1-3 HTF candles
                ENUM_TIMEFRAMES htf;
                int htfCount = 0;
-               if(TryEscalateBaseToHTF(symbol, RBRDBD_RBR, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
+               if(TryEscalateBaseToHTF(symbol, RBRDBD_RBR, bStartTime, bEndTime, rates[outIdx].time,
                                        baseHigh, baseLow, baseLen, htf, htfCount))
                {
-                  RegisterNewArea(data, RBRDBD_RBR, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
+                  RegisterNewArea(data, RBRDBD_RBR, bStartTime, bEndTime, rates[outIdx].time,
                                   baseHigh, baseLow, htfCount, htf, true, baseLen);
                   return;
                }
@@ -552,7 +557,7 @@ private:
             if(baseLen <= data.maxBaseCandles)
             {
                // Standard Base within limits
-               RegisterNewArea(data, RBRDBD_DBD, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
+               RegisterNewArea(data, RBRDBD_DBD, bStartTime, bEndTime, rates[outIdx].time,
                                baseLow, baseHigh, baseLen, data.tf, false, baseLen);
                return;
             }
@@ -561,10 +566,10 @@ private:
                // Base > maxBaseCandles in M1: Attempt Recursive MTF Escalation to 1-3 HTF candles
                ENUM_TIMEFRAMES htf;
                int htfCount = 0;
-               if(TryEscalateBaseToHTF(symbol, RBRDBD_DBD, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
+               if(TryEscalateBaseToHTF(symbol, RBRDBD_DBD, bStartTime, bEndTime, rates[outIdx].time,
                                        baseLow, baseHigh, baseLen, htf, htfCount))
                {
-                  RegisterNewArea(data, RBRDBD_DBD, rates[baseEnd].time, rates[baseStart].time, rates[outIdx].time,
+                  RegisterNewArea(data, RBRDBD_DBD, bStartTime, bEndTime, rates[outIdx].time,
                                   baseLow, baseHigh, htfCount, htf, true, baseLen);
                   return;
                }
@@ -809,7 +814,7 @@ private:
          }
          ObjectSetInteger(0, rectName, OBJPROP_COLOR, clr);
          ObjectSetInteger(0, rectName, OBJPROP_FILL, true);
-         ObjectSetInteger(0, rectName, OBJPROP_BACK, true);
+         ObjectSetInteger(0, rectName, OBJPROP_BACK, false);
          ObjectSetInteger(0, rectName, OBJPROP_SELECTABLE, false);
          ObjectSetInteger(0, rectName, OBJPROP_STYLE, area.isInvalid ? STYLE_DOT : STYLE_SOLID);
 
@@ -839,6 +844,7 @@ private:
          ObjectSetInteger(0, textName, OBJPROP_COLOR, clr);
          ObjectSetInteger(0, textName, OBJPROP_FONTSIZE, 8);
          ObjectSetString(0, textName, OBJPROP_FONT, "Arial Bold");
+         ObjectSetInteger(0, textName, OBJPROP_BACK, false);
       }
 
       ChartRedraw(0);

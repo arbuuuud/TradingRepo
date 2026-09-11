@@ -81,7 +81,19 @@ void OnDeinit(const int reason)
 void OnTick()
 {
    static datetime lastM1Bar = 0;
+   static bool firstTickHistoryChecked = false;
    datetime currentM1Bar = iTime(_Symbol, PERIOD_M1, 0);
+
+   // Fallback check on first live ticks if OnInit had insufficient bars
+   if(!firstTickHistoryChecked)
+   {
+      firstTickHistoryChecked = true;
+      if(ExtRBRDBD.GetValidAreasCount(PERIOD_M1) == 0)
+      {
+         Print("[rbrdbdV1Sample] First tick fallback: Re-running InitHistory to ensure full historical scan...");
+         ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars);
+      }
+   }
 
    // 1. Event-driven update on completed candle close
    if(currentM1Bar != lastM1Bar)
