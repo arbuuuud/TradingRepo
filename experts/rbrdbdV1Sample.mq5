@@ -144,6 +144,15 @@ void OnTick()
             PrintFormat("[rbrdbdV1Sample] Garbage Collector purged %d old/mitigated zones.", purged);
          }
       }
+
+      // 4. Proactive Limit Order Placement & Management (Phase 5)
+      // Placed strictly on candle close / new bar to prevent tick-level spamming!
+      if(InpEnablePhase4 && InpEnablePhase5)
+      {
+         double curBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double curAsk = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         ExtLimitPlacer.ManageLimitGrids(ExtTradingArea.GetActiveArea(), curBid, curAsk);
+      }
    }
 
    // 2. Real-time consumption update on live price tick
@@ -155,12 +164,6 @@ void OnTick()
    if(InpEnablePhase4)
    {
       ExtTradingArea.UpdateTradingArea(_Symbol, ExtRBRDBD, bid, ask);
-
-      // 4. Proactive Limit Order Placement & Management (Phase 5)
-      if(InpEnablePhase5)
-      {
-         ExtLimitPlacer.ManageLimitGrids(ExtTradingArea.GetActiveArea(), bid, ask);
-      }
    }
 
    // 5. Update Chart HUD Info
