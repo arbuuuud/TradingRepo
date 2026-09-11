@@ -63,6 +63,14 @@ struct SRBRDBDArea
    datetime          fvgEndTime;       // End timestamp of the FVG (Candle after Leg-Out)
    int               scorePhase2_3;    // +1 Point if passDirectFVG is true, 0 otherwise
 
+   // Phase 2.4A: HTF RBR/DBD Parent Zone Reaction (Anti-No Man's Land)
+   bool              passHTFZone;      // True if zone base sits inside or reacts from HTF (M15/H1) RBR/DBD
+   ENUM_TIMEFRAMES   htfZoneTF;        // Timeframe of the parent HTF zone (PERIOD_M15 or PERIOD_H1)
+   ENUM_RBRDBD_TYPE  htfZoneType;      // Type of parent HTF zone
+   double            htfZoneProximal;  // Proximal edge of parent HTF zone
+   double            htfZoneDistal;    // Distal edge of parent HTF zone
+   int               scorePhase2_4A;   // +1 Point if passHTFZone is true, 0 otherwise
+
    int               totalScore;       // Phase 2 total score accumulator (0 to 5)
 
    void Init()
@@ -102,6 +110,13 @@ struct SRBRDBDArea
       fvgStartTime      = 0;
       fvgEndTime        = 0;
       scorePhase2_3     = 0;
+
+      passHTFZone       = false;
+      htfZoneTF         = PERIOD_CURRENT;
+      htfZoneType       = RBRDBD_NONE;
+      htfZoneProximal   = 0.0;
+      htfZoneDistal     = 0.0;
+      scorePhase2_4A    = 0;
 
       totalScore        = 0;
    }
@@ -164,12 +179,14 @@ private:
    bool                 m_enablePhase2_1; // Base Tightness & MTF Reflection
    bool                 m_enablePhase2_2; // Origin TF BOS / ChoCH Body Close
    bool                 m_enablePhase2_3; // Origin TF Direct Attached FVG
+   bool                 m_enablePhase2_4A;// HTF RBR/DBD Parent Zone Reaction
    double               m_minFVGGapPoints;// Minimum FVG gap in points (default 50 = $0.50 on Gold)
 
 public:
    CRBRDBDV1() : m_totalTFs(0), m_objPrefix("RBRDBD_"),
                  m_enablePhase2_1(true), m_enablePhase2_2(true),
-                 m_enablePhase2_3(true), m_minFVGGapPoints(50.0)
+                 m_enablePhase2_3(true), m_enablePhase2_4A(true),
+                 m_minFVGGapPoints(50.0)
    {
       ArrayResize(m_tfList, 0);
    }
@@ -180,17 +197,20 @@ public:
    void SetPhase2Switches(const bool enablePhase2_1,
                           const bool enablePhase2_2,
                           const bool enablePhase2_3 = true,
+                          const bool enablePhase2_4A = true,
                           const double minFVGGapPoints = 50.0)
    {
-      m_enablePhase2_1  = enablePhase2_1;
-      m_enablePhase2_2  = enablePhase2_2;
-      m_enablePhase2_3  = enablePhase2_3;
-      m_minFVGGapPoints = minFVGGapPoints;
+      m_enablePhase2_1   = enablePhase2_1;
+      m_enablePhase2_2   = enablePhase2_2;
+      m_enablePhase2_3   = enablePhase2_3;
+      m_enablePhase2_4A  = enablePhase2_4A;
+      m_minFVGGapPoints  = minFVGGapPoints;
    }
 
-   bool GetPhase2_1Enabled() const { return m_enablePhase2_1; }
-   bool GetPhase2_2Enabled() const { return m_enablePhase2_2; }
-   bool GetPhase2_3Enabled() const { return m_enablePhase2_3; }
+   bool GetPhase2_1Enabled()  const { return m_enablePhase2_1; }
+   bool GetPhase2_2Enabled()  const { return m_enablePhase2_2; }
+   bool GetPhase2_3Enabled()  const { return m_enablePhase2_3; }
+   bool GetPhase2_4AEnabled() const { return m_enablePhase2_4A; }
 
    ~CRBRDBDV1()
    {
@@ -301,7 +321,8 @@ public:
                // Recalculate total score dynamically
                data.areas[a].totalScore = data.areas[a].scorePhase2_1 +
                                           data.areas[a].scorePhase2_2 +
-                                          data.areas[a].scorePhase2_3;
+                                          data.areas[a].scorePhase2_3 +
+                                          data.areas[a].scorePhase2_4A;
             }
          }
       }
@@ -808,10 +829,20 @@ private:
          data.areas[size].scorePhase2_3 = 0;
       }
 
+      // --- PHASE 2.4A: HTF RBR/DBD Parent Zone Reaction (Anti-No Man's Land) ---
+      if(m_enablePhase2_4A)
+         EvaluatePhase2_4A_HTFZoneReaction(symbol, data.areas[size]);
+      else
+      {
+         data.areas[size].passHTFZone    = false;
+         data.areas[size].scorePhase2_4A = 0;
+      }
+
       // Phase 2 Total Score Accumulator (Sums active modules)
       data.areas[size].totalScore = data.areas[size].scorePhase2_1 +
                                     data.areas[size].scorePhase2_2 +
-                                    data.areas[size].scorePhase2_3;
+                                    data.areas[size].scorePhase2_3 +
+                                    data.areas[size].scorePhase2_4A;
 
       string lbl = (type == RBRDBD_RBR) ? "RBR" : "DBD";
       data.areas[size].objName = m_objPrefix + EnumToString(finalPeriod) + "_" + lbl + "_" + TimeToString(bStart, TIME_DATE|TIME_MINUTES);
@@ -1213,6 +1244,110 @@ private:
    }
 
    //+------------------------------------------------------------------+
+   //| Phase 2.4A Evaluator: HTF RBR/DBD Parent Zone Reaction           |
+   //| Validates if zone base sits inside or reacts from active M15/H1  |
+   //| supply/demand parent zone (Anti-No Man's Land)                   |
+   //+------------------------------------------------------------------+
+   void EvaluatePhase2_4A_HTFZoneReaction(const string symbol, SRBRDBDArea &area)
+   {
+      area.passHTFZone     = false;
+      area.htfZoneTF       = PERIOD_CURRENT;
+      area.htfZoneType     = RBRDBD_NONE;
+      area.htfZoneProximal = 0.0;
+      area.htfZoneDistal   = 0.0;
+      area.scorePhase2_4A  = 0;
+
+      // Ensure HTF data is up to date (M15 and H1)
+      EnsureHTFZoneScanned(symbol, PERIOD_M15);
+      EnsureHTFZoneScanned(symbol, PERIOD_H1);
+
+      ENUM_TIMEFRAMES htfLadder[2] = { PERIOD_M15, PERIOD_H1 };
+      double tolerance = 30.0 * _Point; // 30 points boundary tolerance for Gold
+
+      for(int i = 0; i < 2; i++)
+      {
+         ENUM_TIMEFRAMES htfTF = htfLadder[i];
+         int tfIdx = FindTFIndex(htfTF);
+         if(tfIdx < 0) continue;
+
+         int totalHTF = ArraySize(m_tfList[tfIdx].areas);
+         for(int h = 0; h < totalHTF; h++)
+         {
+            // Must match zone polarity: RBR reacts from HTF RBR, DBD reacts from HTF DBD
+            if(m_tfList[tfIdx].areas[h].type != area.type) continue;
+
+            // Parent HTF zone must have been formed BEFORE or AT this LTF zone base
+            if(m_tfList[tfIdx].areas[h].baseStart > area.baseEnd) continue;
+
+            // Check price overlap / nested reaction
+            double htfTop = MathMax(m_tfList[tfIdx].areas[h].proximal, m_tfList[tfIdx].areas[h].distal);
+            double htfBot = MathMin(m_tfList[tfIdx].areas[h].proximal, m_tfList[tfIdx].areas[h].distal);
+
+            double ltfTop = MathMax(area.proximal, area.distal);
+            double ltfBot = MathMin(area.proximal, area.distal);
+
+            bool reacts = false;
+            if(area.type == RBRDBD_RBR)
+            {
+               // Demand reaction: Bottom of LTF zone (ltfBot) dips into or near HTF Demand [htfBot - tol, htfTop + tol]
+               if(ltfBot <= (htfTop + tolerance) && ltfTop >= (htfBot - tolerance))
+               {
+                  reacts = true;
+               }
+            }
+            else if(area.type == RBRDBD_DBD)
+            {
+               // Supply reaction: Top of LTF zone (ltfTop) taps into or near HTF Supply [htfBot - tol, htfTop + tol]
+               if(ltfTop >= (htfBot - tolerance) && ltfBot <= (htfTop + tolerance))
+               {
+                  reacts = true;
+               }
+            }
+
+            if(reacts)
+            {
+               area.passHTFZone     = true;
+               area.htfZoneTF       = htfTF;
+               area.htfZoneType     = m_tfList[tfIdx].areas[h].type;
+               area.htfZoneProximal = m_tfList[tfIdx].areas[h].proximal;
+               area.htfZoneDistal   = m_tfList[tfIdx].areas[h].distal;
+               area.scorePhase2_4A  = 1;
+               return; // Priority matched (M15 first, or H1)
+            }
+         }
+      }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Ensure HTF Timeframe is registered and history scanned silently  |
+   //+------------------------------------------------------------------+
+   void EnsureHTFZoneScanned(const string symbol, const ENUM_TIMEFRAMES tf)
+   {
+      int idx = FindTFIndex(tf);
+      if(idx < 0)
+      {
+         // Auto-register HTF silently without drawing boxes on chart
+         RegisterTimeframe(tf, 1, 5, 1.0, false);
+         idx = FindTFIndex(tf);
+         if(idx >= 0)
+         {
+            InitTFHistory(symbol, m_tfList[idx], 300);
+         }
+      }
+      else
+      {
+         // If already registered, update closed bars if new bar closed
+         datetime curBar = iTime(symbol, tf, 0);
+         if(curBar != m_tfList[idx].lastBarTime)
+         {
+            m_tfList[idx].lastBarTime = curBar;
+            EvaluateClosedBarConsumption(symbol, m_tfList[idx]);
+            ScanRecentBars(symbol, m_tfList[idx]);
+         }
+      }
+   }
+
+   //+------------------------------------------------------------------+
    //| Recursive MTF Base Consolidation Scanner                         |
    //| If base candles are excessive in M1 (> maxBaseCandles),          |
    //| climb TF ladder to check if it compacts into 1-3 boring candles   |
@@ -1431,7 +1566,15 @@ private:
 
          // Phase 2 Quality Score Info (Adaptive to Active Switches)
          string scoreStr = "";
-         if(m_enablePhase2_3 && !m_enablePhase2_1 && !m_enablePhase2_2)
+         if(m_enablePhase2_4A && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3)
+         {
+            // Pure Phase 2.4A Test Mode (Isolated HTF RBR/DBD Parent Reaction)
+            if(area.scorePhase2_4A > 0)
+               scoreStr = StringFormat("HTF:%s (+1pt)", GetTFShortName(area.htfZoneTF));
+            else
+               scoreStr = "no-HTF (0pt)";
+         }
+         else if(m_enablePhase2_3 && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_4A)
          {
             // Pure Phase 2.3 Test Mode (Isolated FVG test)
             if(area.scorePhase2_3 > 0)
@@ -1439,7 +1582,7 @@ private:
             else
                scoreStr = "no-FVG (0pt)";
          }
-         else if(m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3)
+         else if(m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A)
          {
             // Pure Phase 2.1 Test Mode
             if(area.scorePhase2_1 > 0)
@@ -1447,7 +1590,7 @@ private:
             else
                scoreStr = "no-Tight (0pt)";
          }
-         else if(!m_enablePhase2_1 && m_enablePhase2_2 && !m_enablePhase2_3)
+         else if(!m_enablePhase2_1 && m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A)
          {
             // Pure Phase 2.2 Test Mode (Isolated BOS test)
             if(area.scorePhase2_2 > 0)
@@ -1465,6 +1608,8 @@ private:
                qInfo += "BOS ";
             if(area.scorePhase2_3 > 0)
                qInfo += "FVG ";
+            if(area.scorePhase2_4A > 0)
+               qInfo += "H:" + GetTFShortName(area.htfZoneTF) + " ";
 
             if(StringLen(qInfo) > 0)
                StringTrimRight(qInfo);

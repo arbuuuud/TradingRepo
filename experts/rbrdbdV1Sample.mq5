@@ -25,7 +25,8 @@ input int               InpHistoryBars       = 500;               // History Bar
 input group "=== Phase 2 Modular Testing Switches ==="
 input bool              InpEnablePhase2_1    = false;             // Enable Phase 2.1 (Base Tightness & MTF Refl)
 input bool              InpEnablePhase2_2    = false;             // Enable Phase 2.2 (Origin TF BOS Body Close)
-input bool              InpEnablePhase2_3    = true;              // Enable Phase 2.3 (Origin TF Direct Attached FVG)
+input bool              InpEnablePhase2_3    = false;             // Enable Phase 2.3 (Origin TF Direct Attached FVG)
+input bool              InpEnablePhase2_4A   = true;              // Enable Phase 2.4A (HTF RBR/DBD Parent Reaction)
 input double            InpMinFVGGapPoints   = 50.0;              // Min FVG Gap in Points (50 pts = $0.50)
 
 input group "=== Dynamic Memory & Garbage Collection ==="
@@ -52,7 +53,7 @@ int OnInit()
    Print("=== [rbrdbdV1Sample] Initializing Pure M1 RBR/DBD Engine ===");
 
    // 0. Configure Phase 2 Modular Test Switches
-   ExtRBRDBD.SetPhase2Switches(InpEnablePhase2_1, InpEnablePhase2_2, InpEnablePhase2_3, InpMinFVGGapPoints);
+   ExtRBRDBD.SetPhase2Switches(InpEnablePhase2_1, InpEnablePhase2_2, InpEnablePhase2_3, InpEnablePhase2_4A, InpMinFVGGapPoints);
 
    // 1. Register Main Timeframe: M1
    ExtRBRDBD.RegisterTimeframe(PERIOD_M1, 
@@ -120,7 +121,7 @@ void OnTick()
    if(ExtRBRDBD.GetAreas(PERIOD_M1, areas))
    {
       int total = ArraySize(areas);
-      int active = 0, escalated = 0, p21Passed = 0, bosPassed = 0, fvgPassed = 0, highQuality = 0;
+      int active = 0, escalated = 0, p21Passed = 0, bosPassed = 0, fvgPassed = 0, htfZonePassed = 0, highQuality = 0;
       for(int i = 0; i < total; i++)
       {
          if(!areas[i].isInvalid) active++;
@@ -128,28 +129,34 @@ void OnTick()
          if(areas[i].scorePhase2_1 > 0) p21Passed++;
          if(areas[i].scorePhase2_2 > 0) bosPassed++;
          if(areas[i].scorePhase2_3 > 0) fvgPassed++;
+         if(areas[i].scorePhase2_4A > 0) htfZonePassed++;
          if(areas[i].totalScore >= 2) highQuality++;
       }
 
       string modeHeader;
-      if(InpEnablePhase2_3 && !InpEnablePhase2_1 && !InpEnablePhase2_2)
+      if(InpEnablePhase2_4A && !InpEnablePhase2_1 && !InpEnablePhase2_2 && !InpEnablePhase2_3)
+         modeHeader = "=== RBR/DBD ENGINE (PHASE 2.4A ISOLATED: HTF RBR/DBD REACTION ONLY) ===";
+      else if(InpEnablePhase2_3 && !InpEnablePhase2_1 && !InpEnablePhase2_2 && !InpEnablePhase2_4A)
          modeHeader = "=== RBR/DBD ENGINE (PHASE 2.3 ISOLATED: DIRECT ATTACHED FVG ONLY) ===";
-      else if(!InpEnablePhase2_1 && InpEnablePhase2_2 && !InpEnablePhase2_3)
+      else if(!InpEnablePhase2_1 && InpEnablePhase2_2 && !InpEnablePhase2_3 && !InpEnablePhase2_4A)
          modeHeader = "=== RBR/DBD ENGINE (PHASE 2.2 ISOLATED: BOS ONLY) ===";
-      else if(InpEnablePhase2_1 && !InpEnablePhase2_2 && !InpEnablePhase2_3)
+      else if(InpEnablePhase2_1 && !InpEnablePhase2_2 && !InpEnablePhase2_3 && !InpEnablePhase2_4A)
          modeHeader = "=== RBR/DBD ENGINE (PHASE 2.1 ISOLATED: TIGHTNESS ONLY) ===";
       else
          modeHeader = "=== RBR/DBD ENGINE (PHASE 2 COMBINED) ===";
 
       string qualityBreakdown;
-      if(InpEnablePhase2_3 && !InpEnablePhase2_1 && !InpEnablePhase2_2)
+      if(InpEnablePhase2_4A && !InpEnablePhase2_1 && !InpEnablePhase2_2 && !InpEnablePhase2_3)
+         qualityBreakdown = StringFormat("HTF Zone Pass Rate: %d / %d Zones (%.1f%%) [Parent M15/H1]", 
+                                         htfZonePassed, total, total > 0 ? (htfZonePassed * 100.0 / total) : 0.0);
+      else if(InpEnablePhase2_3 && !InpEnablePhase2_1 && !InpEnablePhase2_2 && !InpEnablePhase2_4A)
          qualityBreakdown = StringFormat("FVG Pass Rate: %d / %d Zones (%.1f%%) [MinGap: %.0f pts]", 
                                          fvgPassed, total, total > 0 ? (fvgPassed * 100.0 / total) : 0.0, InpMinFVGGapPoints);
-      else if(!InpEnablePhase2_1 && InpEnablePhase2_2 && !InpEnablePhase2_3)
+      else if(!InpEnablePhase2_1 && InpEnablePhase2_2 && !InpEnablePhase2_3 && !InpEnablePhase2_4A)
          qualityBreakdown = StringFormat("BOS Pass Rate: %d / %d Zones (%.1f%%)", bosPassed, total, total > 0 ? (bosPassed * 100.0 / total) : 0.0);
       else
-         qualityBreakdown = StringFormat("P2.1: %d/%d | P2.2 (BOS): %d/%d | P2.3 (FVG): %d/%d | Multi-Star: %d/%d", 
-                                         p21Passed, total, bosPassed, total, fvgPassed, total, highQuality, total);
+         qualityBreakdown = StringFormat("P2.1: %d/%d | P2.2: %d/%d | P2.3: %d/%d | P2.4A: %d/%d | Multi-Star: %d/%d", 
+                                         p21Passed, total, bosPassed, total, fvgPassed, total, htfZonePassed, total, highQuality, total);
 
       Comment(StringFormat("%s\n" +
                            "Total Zones: %d | Active: %d | Escalated (M3/M5): %d\n" +
