@@ -53,23 +53,37 @@ Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke 
 
 ## 📋 Rincian Tahapan, Logika Matematis, & Harapan Hasil Uji (Expected Results)
 
-### 🔹 PHASE 1: Penguatan Memory Lifecycle RBR & DBD (M1 Focus)
-*Fokus: Memastikan pool data RBR & DBD di timeframe M1 tersimpan rapi, ringan, dan memiliki siklus hidup yang terdefinisi.*
+### 🔹 PHASE 1: Penguatan Memory Lifecycle RBR & DBD & MTF Base Consolidation Scanner (Default M1)
+*Fokus: Memastikan pool data RBR & DBD tersimpan rapi di memori dinamis, memiliki auto-cleanup, serta mengimplementasikan Recursive MTF Base Scanner jika base di M1 terlalu banyak lilin.*
 
 #### 1. Logika & Mekanisme:
+- **Default Base Timeframe**: M1.
+- **Recursive MTF Base Consolidation Scanner (Menemukan TF Murni 1–3 Lilin Base)**:
+  - Saat mendeteksi pembentukan RBR atau DBD di M1:
+    - Jika jumlah candle di Base **sangat banyak / melebar** (misal $> 5$ candle di M1):
+      - Sistem **tidak langsung membuang** pola tersebut, melainkan melakukan penelusuran naik timeframe secara rekursif:
+        $$\text{Ladder Timeframe: } \text{M1} \rightarrow \text{M3} \rightarrow \text{M5} \rightarrow \text{M15} \rightarrow \text{H1}$$
+      - Pada rentang waktu base yang sama, sistem memeriksa candle pada TF yang lebih tinggi:
+        - Apakah rentang base tersebut termampatkan menjadi **1–3 candle bersih/padat** di timeframe tersebut?
+        - Begitu ditemukan TF di mana base-nya terkonsolidasi bersih menjadi 1–3 candle (misal di M3 atau M5), maka RBR/DBD tersebut resmi **didaftarkan sebagai zona milik Period tersebut** (`area.period = PERIOD_M3` atau `PERIOD_M5`).
+        - Jika setelah dinaikkan sampai batas maksimal (misal M15/H1) base tetap tidak bersih/tidak kompak $\rightarrow$ Pola ditolak sebagai *noise*.
+- **Struct `SRBRDBDArea` (Penambahan Identitas Period)**:
+  - Menyimpan properti `ENUM_TIMEFRAMES period;` (menyimpan apakah zona berakar di M1, M3, M5, dst.).
 - **Struct `CRBRDBDMemoryPool`**:
-  - Menyimpan array aktif objek RBR (Demand) dan DBD (Supply) yang terdeteksi murni di M1.
+  - Menyimpan array aktif objek RBR (Demand) dan DBD (Supply).
 - **Kriteria Relevansi & Garbage Collection (Pembersihan Otomatis)**:
   - Objek RBR/DBD dihapus dari memori jika:
     1. Telah tertembus $100\%$ (*fully mitigated*) dan jarak harga saat ini sudah menjauh melampaui $N$ ATR/points.
     2. Usia zona melampaui ambang batas bar (*max memory bars*, misal $> 1000$ bar M1).
     3. Terbentuk struktur baru yang secara hierarki membatalkan relevansi zona tersebut.
 - **Visualisasi**:
-  - Hanya menampilkan zona yang masih relevan/hidup di chart M1.
+  - Menampilkan zona yang masih relevan/hidup di chart M1 dengan label timeframe asalnya:  
+    misal `M1 RBR [1 C Base]` atau `M3 RBR [2 C Base in M3] (Detected via M1 Escalation)`.
 
 #### 🧪 Harapan / Expected Test Result:
 - Memory footprint stabil (tidak ada kebocoran memori array bertambah terus tanpa batas).
 - Saat zona lama sudah ditembus dan harga bergerak jauh, objek chart terhapus bersih dari layar secara otomatis.
+- Terbukti di chart: Base yang tadinya berantakan (misal 9 candle di M1) tidak menjadi sampah, melainkan dinaikkan secara presisi ke M3 (tampak 3 candle bersih) dan diberi tag `PERIOD_M3`.
 - Fungsi kueri RBR terdekat di bawah harga dan DBD terdekat di atas harga dapat merespon secara instan ($O(N)$ sangat kecil).
 
 ---
@@ -268,28 +282,41 @@ Diberikan parameter input `Max_Pos_per_Trading_Area` (misal $= 10$ posisi):
 
 ---
 
-### 🔹 PHASE 6: Agent Proactive Loss Prevention (Price Action & Counter RBR/DBD Guard)
-*Fokus: Agen pengawal risiko yang memantau floating position secara aktif untuk keluar dini sebelum terkena Hard SL.*
+### 🔹 PHASE 6: Agent Proactive Loss Prevention (Price Action, Cut Profit & Period-Dependent Cut Loss Guard)
+*Fokus: Agen pengawal risiko yang memantau floating position secara aktif untuk Cut Profit dan Period-Dependent Cut Loss sebelum terkena Hard SL 30%.*
 
-#### 1. Pemicu Deteksi Reversal (*Proactive Cut Conditions*):
-Agen terus memonitor pergerakan candle M1 (dan live tick) saat posisi aktif terbuka:
-1. **Pola Candlestick Reversal Kuat**:
-   - Terbentuk **Bearish Engulfing** (untuk posisi Buy aktif) atau **Bullish Engulfing** (untuk posisi Sell aktif).
-   - Terbentuk **Doji Breakdown/Breakout** yang mematahkan momentum.
-   - Terbentuk **Hammer / Shooting Star / Pinbar** dengan panjang ekor penolakan $\ge 60\%$ menentang arah posisi kita.
-2. **Pembentukan Counter RBR / DBD**:
-   - Jika kita sedang memegang posisi **Buy** di Floor, namun tiba-tiba di atas harga berjalan terbentuk **DBD baru (Supply baru)** yang menolak kenaikan harga.
-   - Jika kita sedang memegang posisi **Sell** di Roof, namun tiba-tiba di bawah harga berjalan terbentuk **RBR baru (Demand baru)**.
+#### 1. Mekanisme CUT PROFIT (Early Exit Lock):
+- Berlaku saat posisi aktif sedang menghasilkan *floating net profit* $> 0$:
+  1. **Pola Candlestick Reversal M1**:
+     - Terbentuk **Bearish Engulfing** (pada posisi Buy aktif) atau **Bullish Engulfing** (pada posisi Sell aktif).
+     - Terbentuk **Doji Breakdown/Breakout** yang mematahkan momentum ke arah TP.
+     - Terbentuk **Hammer / Shooting Star / Pinbar** dengan panjang ekor penolakan $\ge 60\%$ menentang arah posisi kita.
+  2. **Pembentukan Counter RBR / DBD**:
+     - Jika sedang memegang posisi **Buy** di Floor, namun tiba-tiba di atas harga berjalan terbentuk **DBD baru (Supply baru)**.
+     - Jika sedang memegang posisi **Sell** di Roof, namun tiba-tiba di bawah harga berjalan terbentuk **RBR baru (Demand baru)**.
+- **Tindakan**: Langsung tutup seluruh posisi aktif (*Cut Profit Market Close*), batalkan semua sisa pending limit order dari area tersebut, dan kunci area (*lockout*).
 
-#### 2. Tindakan Eksekusi Agen:
-- **Tutup Posisi Aktif Segera**: Melakukan market close seketika (*Emergency Early Exit*) untuk mengamankan sisa modal atau mengunci profit kecil.
-- **Batalkan Sisa Pending Order**: Membatalkan semua limit order yang tersisa pada `TradingArea` tersebut agar tidak terjemput oleh momentum lawan.
-- **Lockout Area**: Mengunci `TradingArea` tersebut ke status *Cool-Down* agar agen pembuat order tidak memasang order baru kembali ke area yang sudah berbahaya.
+#### 2. Mekanisme CUT LOSS Berbasis Timeframe Zona (*Period-Dependent Candle Close Cut Loss*):
+- **Logika Dependensi Timeframe (*Period-Aware Exit*)**:
+  - Batas cut loss bukan sekadar titik tick, melainkan mengacu pada **Candle Close di Timeframe asal RBR/DBD tersebut**:
+    - Jika zona Floor/Roof berakar dari **Period M1**: Evaluasi **Candle Close M1**. Jika ada candle M1 yang ditutup (*Close*) di luar batas buffer Floor/Roof $\rightarrow$ **Auto Close Semua Posisi (Cut Loss)** seketika!
+    - Jika zona Floor/Roof berakar dari **Period M3** (hasil eskalasi MTF Phase 1): Evaluasi **Candle Close M3**. Penembusan ekor wick M1 diabaikan; Cut Loss baru terpicu jika **Candle M3 resmi ditutup** di luar batas buffer!
+    - Jika zona Floor/Roof berakar dari **Period M5 / M15**: Menunggu konfirmasi **Candle Close M5 / M15** di luar batas buffer Floor/Roof.
+- **Keunggulan**: Memberikan ruang napas (*breathing room*) yang tepat sesuai bobot timeframe zona. Posisi pada zona M3/M5 tidak akan terkena *whipsaw* atau *noise spike* ekor 1 menit yang belum terkonfirmasi oleh candle close timeframe zona tersebut!
+
+#### 3. Tindakan Eksekusi Agen:
+- **Tutup Posisi Aktif Segera**: Melakukan market close seketika (*Emergency Early Exit / Cut Loss*) untuk membatasi kerugian jauh sebelum Hard SL 30%.
+- **Batalkan Sisa Pending Order**: Membatalkan semua limit order yang tersisa pada `TradingArea` tersebut agar tidak terjemput oleh momentum lawan yang menembus batas.
+- **Lockout Area**: Mengunci `TradingArea` tersebut ke status *Cool-Down* agar agen pembuat order tidak memasang order baru kembali ke area yang sudah breached.
 
 #### 🧪 Harapan / Expected Test Result:
-- Saat harga gagal memantul dan membentuk *engulfing* berlawanan, EA tidak menunggu harga menyeret akun hingga menyentuh Hard SL 30%. Kerugian berhasil dipotong jauh lebih kecil.
+- **Pada Skenario Profit**: Saat harga mendekati TP tapi berbalik membentuk *engulfing*, profit yang ada langsung dikunci (*Cut Profit*), tidak dibiarkan berbalik menjadi floating minus.
+- **Pada Skenario Loss**:
+  - Untuk zona M1: Candle close M1 di bawah Floor buffer langsung mengeksekusi cut loss cepat.
+  - Untuk zona M3: Ekor candle M1 yang menusuk sesaat di luar buffer tidak memicu cut loss prematur selama candle M3 belum ditutup di luar buffer. Begitu candle M3 close di luar buffer, cut loss langsung dieksekusi secara disiplin.
 - Tidak ada limit order tertinggal yang tereksekusi secara sengaja ke arah tren lawan yang baru meledak.
-- Log jurnal MT5 mencatat alasan penutupan dengan jelas: `[PROACTIVE GUARD] Closed Pos #12345 due to Bearish Engulfing / Counter DBD detected!`.
+- Log jurnal MT5 mencatat alasan penutupan dengan jelas:  
+  `[PROACTIVE GUARD] Cut Loss triggered: M3 Candle Closed outside Floor Buffer (Closed Price: 2645.20 vs Buffer: 2646.00)`.
 
 ---
 
@@ -318,7 +345,7 @@ Agen terus memonitor pergerakan candle M1 (dan live tick) saat posisi aktif terb
 
 | Phase | Komponen Utama | Milestone Deliverables | Target File | Status |
 |---|---|---|---|:---:|
-| **1** | M1 RBR/DBD Memory Pool | Storage dinamis & auto-cleanup zona invalid/mitigated | `rbrdbdV1.mqh` | 🟡 Siap Desain |
+| **1** | M1 Memory & MTF Escalation | Storage dinamis, cleanup invalid, & recursive TF climb (1-3 candle base) | `rbrdbdV1.mqh` | 🟡 Siap Desain |
 | **2.1** | Base Tightness & MTF Refl | Bobot +1 poin: Base padat $\le 60\%$ body & 1-3 candle di M5/M15 | `rbrdbdV1.mqh` | ⚪ Menunggu Ph 1 |
 | **2.2** | BOS/ChoCH Body Close | Bobot +1 poin: Wajib close menembus swing, tolak wick sweep | `rbrdbdV1.mqh` | ⚪ Menunggu 2.1 |
 | **2.3** | Direct Attached FVG | Bobot +1 poin: Celah $\ge 50$ pts menempel langsung di batas base | `rbrdbdV1.mqh` | ⚪ Menunggu 2.2 |
@@ -328,7 +355,7 @@ Agen terus memonitor pergerakan candle M1 (dan live tick) saat posisi aktif terb
 | **3** | Min-Variance Buffer Engine | Evaluasi $\min(\text{Swing}_{10}, 2\times\text{Base})$ untuk Floor & Roof | `rbrdbdV1.mqh` | ⚪ Menunggu Ph 2 |
 | **4** | Living TradingArea & State 0–5 | Objek living area, 6-level exhaustion, Hard TP/SL | `TradingArea.mqh` | ⚪ Menunggu Ph 3 |
 | **5** | Agent Proactive Limit Order | Kuota dinamis, fresh depth grid, auto-cancel pada TP | `AgentGridPlacer.mqh` | ⚪ Menunggu Ph 4 |
-| **6** | Agent Proactive Loss Prevention | Deteksi Engulfing/Doji/Counter-zone, emergency close | `AgentLossGuard.mqh` | ⚪ Menunggu Ph 5 |
+| **6** | Proactive Loss Prevention | Cut Profit (Engulfing/Counter-zone) & Period-Aware Cut Loss (Close outside buffer) | `AgentLossGuard.mqh` | ⚪ Menunggu Ph 5 |
 | **7** | Integrated EA & Backtest Suite | Demonstrator terpadu & pengujian di XAUUSD M1 | `rbrdbdV2Sample.mq5` | ⚪ Menunggu Ph 6 |
 
 ---
