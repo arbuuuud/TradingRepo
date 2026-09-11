@@ -59,6 +59,17 @@ int OnInit()
    // 2. Scan history bars and evaluate retests
    ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars);
 
+   // 3. Initial Garbage Collection on startup (clean up any ancient/dead history zones)
+   if(InpEnableGC)
+   {
+      double curPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      int initPurged = ExtRBRDBD.RunGarbageCollection(_Symbol, curPrice, InpMaxMemoryBars, InpPurgeDistMult);
+      if(initPurged > 0)
+      {
+         PrintFormat("[rbrdbdV1Sample] Startup Garbage Collector purged %d outdated/mitigated zones.", initPurged);
+      }
+   }
+
    PrintFormat("[rbrdbdV1Sample] Initialized on %s (PERIOD_M1). Total active zones: %d", 
                _Symbol, ExtRBRDBD.GetValidAreasCount(PERIOD_M1));
 
