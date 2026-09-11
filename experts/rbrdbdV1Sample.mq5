@@ -6,7 +6,7 @@
 #property copyright   "TradingRepo"
 #property link        "https://github.com/arbuuuud/TradingRepo"
 #property version     "2.00"
-#property description "Pure M3 RBR (Demand) & DBD (Supply) Visualizer EA"
+#property description "Pure M1 RBR (Demand) & DBD (Supply) Visualizer EA"
 
 //+------------------------------------------------------------------+
 //| Includes                                                         |
@@ -16,10 +16,10 @@
 //+------------------------------------------------------------------+
 //| Inputs                                                           |
 //+------------------------------------------------------------------+
-input group "=== M3 RBR/DBD Parameters ==="
-input int               InpMinBaseM3         = 1;                 // Min Base Candles (1~5)
-input int               InpMaxBaseM3         = 5;                 // Max Base Candles (1~5)
-input double            InpLegRatioM3        = 1.0;               // Min Leg-Out vs Base Ratio (1.0 = equal)
+input group "=== M1 RBR/DBD Parameters ==="
+input int               InpMinBaseM1         = 1;                 // Min Base Candles (1~5)
+input int               InpMaxBaseM1         = 5;                 // Max Base Candles (1~5)
+input double            InpLegRatioM1        = 1.0;               // Min Leg-Out vs Base Ratio (1.0 = equal)
 input int               InpHistoryBars       = 500;               // History Bars to Scan on Init
 
 input group "=== Visual Colors ==="
@@ -38,13 +38,13 @@ CRBRDBDV1 ExtRBRDBD;
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   Print("=== [rbrdbdV1Sample] Initializing Pure M3 RBR/DBD Engine ===");
+   Print("=== [rbrdbdV1Sample] Initializing Pure M1 RBR/DBD Engine ===");
 
-   // 1. Register Main Timeframe: M3
-   ExtRBRDBD.RegisterTimeframe(PERIOD_M3, 
-                               InpMinBaseM3, 
-                               InpMaxBaseM3, 
-                               InpLegRatioM3, 
+   // 1. Register Main Timeframe: M1
+   ExtRBRDBD.RegisterTimeframe(PERIOD_M1, 
+                               InpMinBaseM1, 
+                               InpMaxBaseM1, 
+                               InpLegRatioM1, 
                                true, 
                                InpColorFreshRBR, 
                                InpColorFreshDBD, 
@@ -54,8 +54,8 @@ int OnInit()
    // 2. Scan history bars and evaluate retests
    ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars);
 
-   PrintFormat("[rbrdbdV1Sample] Initialized on %s (PERIOD_M3). Total active zones: %d", 
-               _Symbol, ExtRBRDBD.GetValidAreasCount(PERIOD_M3));
+   PrintFormat("[rbrdbdV1Sample] Initialized on %s (PERIOD_M1). Total active zones: %d", 
+               _Symbol, ExtRBRDBD.GetValidAreasCount(PERIOD_M1));
 
    return INIT_SUCCEEDED;
 }

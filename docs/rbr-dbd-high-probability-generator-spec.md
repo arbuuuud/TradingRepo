@@ -119,7 +119,7 @@ Tahapan implementasi spesifikasi ini ke dalam codebase MQL5 (`TradingRepo`):
                       [ SPESIFIKASI RISET (Dokumen Ini) ]
                                       │
                                       ▼
-             [ FASE 1: Deteksi Geometris Murni (M3 Engine) ]
+             [ FASE 1: Deteksi Geometris Murni (M1 Engine) ]
              • Identifikasi Leg-In, Base padat, Leg-Out
              • Tracking konsumsi/retest & visualisasi chart (Completed di rbrdbdV1)
                                       │

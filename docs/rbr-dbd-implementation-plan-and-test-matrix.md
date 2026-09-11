@@ -1,9 +1,9 @@
-# Cetak Biru Arsitektur & Tahapan Implementasi: Living Trading Area & Dual Proactive Agent Framework (XAUUSD M3)
+# Cetak Biru Arsitektur & Tahapan Implementasi: Living Trading Area & Dual Proactive Agent Framework (XAUUSD M1)
 
 > **Spesifikasi Rekayasa Sistem Algoritmik S&D Terpadu**  
-> **Target Arsitektur:** Single-TF Focus (M3) $\rightarrow$ Living TradingArea Object $\rightarrow$ Proactive Limit Grid Engine $\rightarrow$ Proactive Loss Prevention Engine  
+> **Target Arsitektur:** Single-TF Focus (M1) $\rightarrow$ Living TradingArea Object $\rightarrow$ Proactive Limit Grid Engine $\rightarrow$ Proactive Loss Prevention Engine  
 > **Target File:** `include/arbud/structure/` & `experts/rbrdbdV1Sample.mq5` (serta Next-Gen EA)  
-> **Instrumen:** XAUUSD (Gold) | **Base Timeframe:** M3  
+> **Instrumen:** XAUUSD (Gold) | **Base Timeframe:** M1  
 
 ---
 
@@ -22,7 +22,7 @@ Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke 
 ## 🗺️ Roadmap Tahapan Implementasi (Step-by-Step Milestones)
 
 ```
-[ PHASE 1: Pure M3 RBR/DBD Memory & Lifecycle ] 
+[ PHASE 1: Pure M1 RBR/DBD Memory & Lifecycle ] 
        │
        ▼
 [ PHASE 2: Dynamic Buffer Calculation (10-Candle Swing vs 2x Base) ]
@@ -44,19 +44,19 @@ Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke 
 
 ## 📋 Rincian Tahapan, Logika Matematis, & Harapan Hasil Uji (Expected Results)
 
-### 🔹 PHASE 1: Penguatan Memory Lifecycle RBR & DBD (M3 Focus)
-*Fokus: Memastikan pool data RBR & DBD di timeframe M3 tersimpan rapi, ringan, dan memiliki siklus hidup yang terdefinisi.*
+### 🔹 PHASE 1: Penguatan Memory Lifecycle RBR & DBD (M1 Focus)
+*Fokus: Memastikan pool data RBR & DBD di timeframe M1 tersimpan rapi, ringan, dan memiliki siklus hidup yang terdefinisi.*
 
 #### 1. Logika & Mekanisme:
 - **Struct `CRBRDBDMemoryPool`**:
-  - Menyimpan array aktif objek RBR (Demand) dan DBD (Supply) yang terdeteksi murni di M3.
+  - Menyimpan array aktif objek RBR (Demand) dan DBD (Supply) yang terdeteksi murni di M1.
 - **Kriteria Relevansi & Garbage Collection (Pembersihan Otomatis)**:
   - Objek RBR/DBD dihapus dari memori jika:
     1. Telah tertembus $100\%$ (*fully mitigated*) dan jarak harga saat ini sudah menjauh melampaui $N$ ATR/points.
-    2. Usia zona melampaui ambang batas bar (*max memory bars*, misal $> 1000$ bar M3).
+    2. Usia zona melampaui ambang batas bar (*max memory bars*, misal $> 1000$ bar M1).
     3. Terbentuk struktur baru yang secara hierarki membatalkan relevansi zona tersebut.
 - **Visualisasi**:
-  - Hanya menampilkan zona yang masih relevan/hidup di chart M3.
+  - Hanya menampilkan zona yang masih relevan/hidup di chart M1.
 
 #### 🧪 Harapan / Expected Test Result:
 - Memory footprint stabil (tidak ada kebocoran memori array bertambah terus tanpa batas).
@@ -160,7 +160,7 @@ Diberikan parameter input `Max_Pos_per_Trading_Area` (misal $= 10$ posisi):
 *Fokus: Agen pengawal risiko yang memantau floating position secara aktif untuk keluar dini sebelum terkena Hard SL.*
 
 #### 1. Pemicu Deteksi Reversal (*Proactive Cut Conditions*):
-Agen terus memonitor pergerakan candle M3 (dan live tick) saat posisi aktif terbuka:
+Agen terus memonitor pergerakan candle M1 (dan live tick) saat posisi aktif terbuka:
 1. **Pola Candlestick Reversal Kuat**:
    - Terbentuk **Bearish Engulfing** (untuk posisi Buy aktif) atau **Bullish Engulfing** (untuk posisi Sell aktif).
    - Terbentuk **Doji Breakdown/Breakout** yang mematahkan momentum.
@@ -206,12 +206,12 @@ Agen terus memonitor pergerakan candle M3 (dan live tick) saat posisi aktif terb
 
 | Phase | Komponen Utama | Milestone Deliverables | Target File | Status |
 |---|---|---|---|:---:|
-| **1** | M3 RBR/DBD Memory Pool | Storage dinamis & auto-cleanup zona invalid | `rbrdbdV1.mqh` | 🟡 Siap Desain |
+| **1** | M1 RBR/DBD Memory Pool | Storage dinamis & auto-cleanup zona invalid | `rbrdbdV1.mqh` | 🟡 Siap Desain |
 | **2** | Min-Variance Buffer Engine | Evaluasi $\min(\text{Swing}_{10}, 2\times\text{Base})$ untuk Floor & Roof | `rbrdbdV1.mqh` | ⚪ Menunggu Ph 1 |
 | **3** | Living TradingArea & State 0–5 | Objek living area, 6-level exhaustion, Hard TP/SL | `TradingArea.mqh` | ⚪ Menunggu Ph 2 |
 | **4** | Agent Proactive Limit Order | Kuota dinamis, fresh depth grid, auto-cancel pada TP | `AgentGridPlacer.mqh` | ⚪ Menunggu Ph 3 |
 | **5** | Agent Proactive Loss Prevention | Deteksi Engulfing/Doji/Counter-zone, emergency close | `AgentLossGuard.mqh` | ⚪ Menunggu Ph 4 |
-| **6** | Integrated EA & Backtest Suite | Demonstrator terpadu & pengujian di XAUUSD M3 | `rbrdbdV2Sample.mq5` | ⚪ Menunggu Ph 5 |
+| **6** | Integrated EA & Backtest Suite | Demonstrator terpadu & pengujian di XAUUSD M1 | `rbrdbdV2Sample.mq5` | ⚪ Menunggu Ph 5 |
 
 ---
 
