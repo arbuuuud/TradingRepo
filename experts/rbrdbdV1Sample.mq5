@@ -81,22 +81,7 @@ void OnDeinit(const int reason)
 void OnTick()
 {
    static datetime lastM1Bar = 0;
-   static bool historyLoaded = false;
    datetime currentM1Bar = iTime(_Symbol, PERIOD_M1, 0);
-
-   // Strategy Tester / Live Warmup
-   if(!historyLoaded)
-   {
-      int availableBars = iBars(_Symbol, PERIOD_M1);
-      if(availableBars >= (InpMaxBaseM1 + 5))
-      {
-         historyLoaded = true;
-         PrintFormat("[rbrdbdV1Sample] Executing InitHistory on first ready tick (Bars: %d)...", availableBars);
-         ExtRBRDBD.InitHistory(_Symbol, InpHistoryBars);
-         PrintFormat("[rbrdbdV1Sample] InitHistory finished. Active zones on chart: %d", ExtRBRDBD.GetValidAreasCount(PERIOD_M1));
-         ChartRedraw(0);
-      }
-   }
 
    // 1. Event-driven update on completed candle close
    if(currentM1Bar != lastM1Bar)
