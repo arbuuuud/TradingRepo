@@ -375,8 +375,24 @@ private:
       MqlRates rates[];
       ArraySetAsSeries(rates, true);
 
-      int copied = CopyRates(symbol, data.tf, 0, maxBars + 25, rates);
-      if(copied < (data.maxBaseCandles + 5)) return;
+      // Attempt to load history, retry up to 5 times if MT5 terminal hasn't synced bars yet
+      int copied = 0;
+      for(int attempt = 0; attempt < 5; attempt++)
+      {
+         copied = CopyRates(symbol, data.tf, 0, maxBars + 25, rates);
+         if(copied >= (data.maxBaseCandles + 5)) break;
+         Sleep(50);
+      }
+
+      PrintFormat("[CRBRDBDV1] InitTFHistory: Requested %d bars for %s on %s -> Copied %d bars.",
+                  maxBars, EnumToString(data.tf), symbol, copied);
+
+      if(copied < (data.maxBaseCandles + 5))
+      {
+         PrintFormat("[CRBRDBDV1] WARNING: Insufficient bars copied (%d < %d) for %s. Waiting for next ticks.",
+                     copied, (data.maxBaseCandles + 5), EnumToString(data.tf));
+         return;
+      }
 
       ArrayResize(data.areas, 0);
 
@@ -390,6 +406,8 @@ private:
       {
          DetectPatternAtBar(symbol, rates, copied, outIdx, data);
       }
+
+      int zonesBeforeRetest = ArraySize(data.areas);
 
       // Track consumption chronologically from zone formation up to Bar 1
       for(int a = 0; a < ArraySize(data.areas); a++)
@@ -409,8 +427,8 @@ private:
          DrawAllAreas(data);
       }
 
-      PrintFormat("[CRBRDBDV1] InitHistory for %s: %d zones found (%d active).",
-                  EnumToString(data.tf), ArraySize(data.areas), GetValidAreasCount(data.tf));
+      PrintFormat("[CRBRDBDV1] InitHistory for %s: %d raw zones found (%d currently active/unmitigated).",
+                  EnumToString(data.tf), zonesBeforeRetest, GetValidAreasCount(data.tf));
    }
 
    //+------------------------------------------------------------------+
