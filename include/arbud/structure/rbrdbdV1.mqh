@@ -838,6 +838,8 @@ private:
    //| Phase 2.2 Evaluator: BOS / ChoCH Wajib Body Close on Origin TF   |
    //| Evaluates swing level matching the zone's origin period          |
    //| High-Precision Engine: 5-bar structural pivot & pullback depth   |
+   //| NOTE: Functional bare minimum for MVP; can be improved later     |
+   //|       (e.g., adaptive multi-bar ATR clearance / dynamic zig-zag)  |
    //+------------------------------------------------------------------+
    void EvaluatePhase2_2_BOS(const string symbol, SRBRDBDArea &area)
    {

@@ -109,7 +109,8 @@ Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke 
 
 #### 🔸 Phase 2.2: BOS / ChoCH Wajib Body Close
 - **Logika Matematis**:
-  - Deteksi Swing High dan Swing Low terdekat sebelum Leg-Out menggunakan lookback fractal/swing murni.
+  - Deteksi Swing High dan Swing Low terdekat sebelum Leg-Out diselaraskan langsung pada Timeframe Asal zona (`area.period` $\in \{\text{M1, M3, M5, dst.}\}$).
+  - Menggunakan **5-Bar Structural Pivot (2 kiri, 2 kanan)** dengan jeda (*clearance*) minimal 2 bar dari Base dan validasi kedalaman lembah (*valley pullback depth* $\ge \text{zoneHeight}$).
   - **RBR (Bullish Breakout)**:
     - Harga `rates[legOutIdx].close > SwingHigh_Terdekat` (Wajib **Body Close** melampaui level swing).
     - Jika `rates[legOutIdx].high > SwingHigh` tapi `rates[legOutIdx].close <= SwingHigh`: Ini terdeteksi sebagai **Wick Sweep**, bukan BOS $\rightarrow$ Ditolak!
@@ -117,8 +118,13 @@ Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke 
     - Harga `rates[legOutIdx].close < SwingLow_Terdekat` (Wajib **Body Close** melampaui level swing).
     - Jika hanya ekor low yang menembus swing low lalu close di atasnya $\rightarrow$ Ditolak!
 - **Poin Tambahan**: +1 Poin jika lolos Body Close BOS / ChoCH.
+- **Visual Reference Line**:
+  - Garis horizontal putus-putus berwana Aqua (RBR) atau Orange-Red (DBD) ditarik dari puncak Swing High/Low ke lilin Leg-Out.
+- **📌 Catatan Pengembangan (Engineering Note / Backlog)**:
+  - *Deteksi swing untuk penentuan BOS saat ini telah bekerja secara fungsional dan cukup akurat untuk bare minimum MVP.*
+  - *Dapat ditingkatkan lebih lanjut di masa mendatang (misal: penyempurnaan deteksi sub-struktur zig-zag dinamis / adaptive multi-bar ATR clearance), namun ditunda (deferred) untuk menjaga fokus pada penyelesaian modul-modul fungsional utama terlebih dahulu.*
 - **🧪 Harapan / Expected Test Result**:
-  - Pada chart muncul garis horizontal putus-putus berlabel `BOS (Body Close)` atau `ChoCH (Body Close)` yang ditarik dari swing yang ditembus.
+  - Pada chart muncul garis horizontal putus-putus berlabel `BOS (Body Close)` yang ditarik dari swing yang ditembus.
   - Sinyal fakeout di mana harga hanya menjilat swing high/low dengan ekor panjang (*liquidity grab*) tidak lagi mendapatkan poin BOS.
   - Tereliminasi zona RBR/DBD yang terbentuk di tengah-tengah rentang tanpa mematahkan struktur pasar apapun.
 
