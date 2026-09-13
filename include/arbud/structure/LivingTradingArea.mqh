@@ -507,23 +507,36 @@ private:
          newArea.floorScore      = 0;
          newArea.floorDNA        = "----";
 
-         // Condition 2: Try HTF Swing Low
-         double htfSwingLow = FindHTFSwingLow(symbol, midPrice);
-         if(htfSwingLow > 0.0 && htfSwingLow < midPrice)
+         // Condition 2: Try Local Swing Low (Adaptive TF with distance cap)
+         double roofSpan = MathAbs(roofZone.finalBoundary - roofZone.proximal);
+         if(roofSpan <= (5.0 * _Point)) roofSpan = 50.0 * _Point;
+
+         ENUM_TIMEFRAMES swingTF = (m_baseTF == PERIOD_M1) ? PERIOD_M5 : (m_baseTF == PERIOD_M5 ? PERIOD_M15 : PERIOD_H1);
+         double localSwingLow = FindAdaptiveSwingLow(symbol, swingTF, midPrice);
+
+         // Safety Cap: Swing must not exceed 3.0x Roof Span from proximal
+         bool swingValid = false;
+         if(localSwingLow > 0.0 && localSwingLow < midPrice)
+         {
+            double dist = roofZone.proximal - localSwingLow;
+            if(dist > (10.0 * _Point) && dist <= (3.0 * roofSpan))
+            {
+               swingValid = true;
+            }
+         }
+
+         if(swingValid)
          {
             newArea.cascadeCondition = CASCADE_COND2_HTF_SWING;
             newArea.floorSource      = BOUNDARY_HTF_SWING;
-            newArea.floorBoundary    = htfSwingLow;
-            newArea.floorDistal      = htfSwingLow;
-            newArea.floorProximal    = htfSwingLow;
+            newArea.floorBoundary    = localSwingLow;
+            newArea.floorDistal      = localSwingLow;
+            newArea.floorProximal    = localSwingLow;
          }
          else
          {
             // Condition 3: Fallback 2.0x Roof Span downwards (RR 1:1 TP at 1.0x Roof Span)
             // Roof Span = Final Roof (100%, includes buffer) - Base Bottom (proximal)
-            double roofSpan = MathAbs(roofZone.finalBoundary - roofZone.proximal);
-            if(roofSpan <= (5.0 * _Point)) roofSpan = 50.0 * _Point;
-
             newArea.cascadeCondition = CASCADE_COND3_BASE_RR1;
             newArea.floorSource      = BOUNDARY_BASE_SPAN_RR1;
             // Floor (0%) is placed 2x roofSpan below Base Bottom so that TP 50% is exactly 1x roofSpan (RR 1:1)
@@ -543,23 +556,36 @@ private:
          newArea.roofScore       = 0;
          newArea.roofDNA         = "----";
 
-         // Condition 2: Try HTF Swing High
-         double htfSwingHigh = FindHTFSwingHigh(symbol, midPrice);
-         if(htfSwingHigh > 0.0 && htfSwingHigh > midPrice)
+         // Condition 2: Try Local Swing High (Adaptive TF with distance cap)
+         double floorSpan = MathAbs(floorZone.proximal - floorZone.finalBoundary);
+         if(floorSpan <= (5.0 * _Point)) floorSpan = 50.0 * _Point;
+
+         ENUM_TIMEFRAMES swingTF = (m_baseTF == PERIOD_M1) ? PERIOD_M5 : (m_baseTF == PERIOD_M5 ? PERIOD_M15 : PERIOD_H1);
+         double localSwingHigh = FindAdaptiveSwingHigh(symbol, swingTF, midPrice);
+
+         // Safety Cap: Swing must not exceed 3.0x Floor Span from proximal
+         bool swingValid = false;
+         if(localSwingHigh > 0.0 && localSwingHigh > midPrice)
+         {
+            double dist = localSwingHigh - floorZone.proximal;
+            if(dist > (10.0 * _Point) && dist <= (3.0 * floorSpan))
+            {
+               swingValid = true;
+            }
+         }
+
+         if(swingValid)
          {
             newArea.cascadeCondition = CASCADE_COND2_HTF_SWING;
             newArea.roofSource       = BOUNDARY_HTF_SWING;
-            newArea.roofBoundary     = htfSwingHigh;
-            newArea.roofDistal       = htfSwingHigh;
-            newArea.roofProximal     = htfSwingHigh;
+            newArea.roofBoundary     = localSwingHigh;
+            newArea.roofDistal       = localSwingHigh;
+            newArea.roofProximal     = localSwingHigh;
          }
          else
          {
             // Condition 3: Fallback 2.0x Floor Span upwards (RR 1:1 TP at 1.0x Floor Span)
             // Floor Span = Base Top (proximal) - Final Floor (0%, includes buffer)
-            double floorSpan = MathAbs(floorZone.proximal - floorZone.finalBoundary);
-            if(floorSpan <= (5.0 * _Point)) floorSpan = 50.0 * _Point;
-
             newArea.cascadeCondition = CASCADE_COND3_BASE_RR1;
             newArea.roofSource       = BOUNDARY_BASE_SPAN_RR1;
             // Roof (100%) is placed 2x floorSpan above Base Top so that TP 50% is exactly 1x floorSpan (RR 1:1)
@@ -875,13 +901,13 @@ private:
    }
 
    //+------------------------------------------------------------------+
-   //| Helper: Find HTF Swing Low below current price                   |
+   //| Helper: Find Adaptive Swing Low below current price              |
    //+------------------------------------------------------------------+
-   double FindHTFSwingLow(const string symbol, const double price)
+   double FindAdaptiveSwingLow(const string symbol, const ENUM_TIMEFRAMES tf, const double price)
    {
       MqlRates rates[];
       ArraySetAsSeries(rates, true);
-      int copied = CopyRates(symbol, PERIOD_M15, 1, 30, rates);
+      int copied = CopyRates(symbol, tf, 1, 30, rates);
       if(copied < 5) return 0.0;
 
       double bestLow = 0.0;
@@ -905,13 +931,13 @@ private:
    }
 
    //+------------------------------------------------------------------+
-   //| Helper: Find HTF Swing High above current price                  |
+   //| Helper: Find Adaptive Swing High above current price             |
    //+------------------------------------------------------------------+
-   double FindHTFSwingHigh(const string symbol, const double price)
+   double FindAdaptiveSwingHigh(const string symbol, const ENUM_TIMEFRAMES tf, const double price)
    {
       MqlRates rates[];
       ArraySetAsSeries(rates, true);
-      int copied = CopyRates(symbol, PERIOD_M15, 1, 30, rates);
+      int copied = CopyRates(symbol, tf, 1, 30, rates);
       if(copied < 5) return 0.0;
 
       double bestHigh = 0.0;
