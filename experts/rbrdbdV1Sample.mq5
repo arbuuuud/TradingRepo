@@ -38,7 +38,7 @@ input bool              InpEnablePhase3      = true;              // Enable Phas
 input group "=== Phase 4 Living TradingArea & Exhaustion ==="
 input bool              InpEnablePhase4      = true;              // Enable Phase 4 Living TradingArea Corridor
 input bool              InpDrawTradingArea   = true;              // Draw TradingArea (Buy/Sell Boxes, TP50, Hard SL)
-input bool              InpHideZoneRectangles= true;              // Hide RBR/DBD Rectangles (Show Labels & TradingArea only)
+input bool              InpHideZoneRectangles= false;             // Hide RBR/DBD Rectangles (false = Show 3-Candle Rectangles)
 
 input group "=== Phase 5 Proactive Limit Order Placer ==="
 input bool              InpEnablePhase5      = true;              // Enable Phase 5 Proactive Limit Grid

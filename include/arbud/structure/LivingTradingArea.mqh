@@ -704,8 +704,8 @@ private:
       if(!m_activeArea.isValid) return;
 
       datetime curTime = TimeCurrent();
-      datetime tStart  = curTime - (PeriodSeconds(m_baseTF) * 20); // Pin to recent bars
-      datetime tEnd    = curTime + (PeriodSeconds(m_baseTF) * 35); // Extend into immediate future
+      datetime tStart  = curTime - (PeriodSeconds(m_baseTF) * 15); // Pin to recent live bars
+      datetime tEnd    = curTime + (PeriodSeconds(m_baseTF) * 25); // Extend into immediate future
 
       // 1. Buy Area Rectangle (0% - 25%)
       string buyRect = m_objPrefix + "BuyZone";
@@ -754,7 +754,7 @@ private:
       string tpTag = m_objPrefix + "TP50_Tag";
       string condStr = (m_activeArea.cascadeCondition == CASCADE_COND1_DUAL_ORGANIC) ? "Cond1: Dual-Organic" :
                        (m_activeArea.cascadeCondition == CASCADE_COND2_HTF_SWING)    ? "Cond2: HTF Swing" : "Cond3: Base RR1";
-      string tpText = StringFormat("── Hard TP 50%%: %.2f [%s]", m_activeArea.hardTP50, condStr);
+      string tpText = StringFormat("── TP 50%%: %.2f [%s]", m_activeArea.hardTP50, condStr);
       if(ObjectFind(0, tpTag) < 0)
          ObjectCreate(0, tpTag, OBJ_TEXT, 0, tStart, m_activeArea.hardTP50);
       else
@@ -780,7 +780,20 @@ private:
       ObjectSetInteger(0, floorSLLine, OBJPROP_RAY_RIGHT, false);
       ObjectSetInteger(0, floorSLLine, OBJPROP_BACK, true);
 
-      // 5. Roof Hard SL Line (+30%)
+      // Floor Hard SL Tag
+      string floorSLTag = m_objPrefix + "FloorHardSL_Tag";
+      string fSLText = StringFormat("── Floor Hard SL (-30%%): %.2f", m_activeArea.floorHardSL);
+      if(ObjectFind(0, floorSLTag) < 0)
+         ObjectCreate(0, floorSLTag, OBJ_TEXT, 0, tStart, m_activeArea.floorHardSL);
+      else
+         ObjectMove(0, floorSLTag, 0, tStart, m_activeArea.floorHardSL);
+      ObjectSetString(0, floorSLTag, OBJPROP_TEXT, fSLText);
+      ObjectSetInteger(0, floorSLTag, OBJPROP_COLOR, m_clrHardSL);
+      ObjectSetInteger(0, floorSLTag, OBJPROP_ANCHOR, ANCHOR_LEFT_LOWER);
+      ObjectSetInteger(0, floorSLTag, OBJPROP_FONTSIZE, 8);
+      ObjectSetString(0, floorSLTag, OBJPROP_FONT, "Arial Bold");
+
+      // 5. Roof Hard SL Line (+130%)
       string roofSLLine = m_objPrefix + "RoofHardSL";
       if(ObjectFind(0, roofSLLine) < 0)
          ObjectCreate(0, roofSLLine, OBJ_TREND, 0, tStart, m_activeArea.roofHardSL, tEnd, m_activeArea.roofHardSL);
@@ -795,7 +808,20 @@ private:
       ObjectSetInteger(0, roofSLLine, OBJPROP_RAY_RIGHT, false);
       ObjectSetInteger(0, roofSLLine, OBJPROP_BACK, true);
 
-      // 6. Buy Exhaustion Label
+      // Roof Hard SL Tag
+      string roofSLTag = m_objPrefix + "RoofHardSL_Tag";
+      string rSLText = StringFormat("── Roof Hard SL (130%%): %.2f", m_activeArea.roofHardSL);
+      if(ObjectFind(0, roofSLTag) < 0)
+         ObjectCreate(0, roofSLTag, OBJ_TEXT, 0, tStart, m_activeArea.roofHardSL);
+      else
+         ObjectMove(0, roofSLTag, 0, tStart, m_activeArea.roofHardSL);
+      ObjectSetString(0, roofSLTag, OBJPROP_TEXT, rSLText);
+      ObjectSetInteger(0, roofSLTag, OBJPROP_COLOR, m_clrHardSL);
+      ObjectSetInteger(0, roofSLTag, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+      ObjectSetInteger(0, roofSLTag, OBJPROP_FONTSIZE, 8);
+      ObjectSetString(0, roofSLTag, OBJPROP_FONT, "Arial Bold");
+
+      // 6. Buy Exhaustion Label (25% - 0% Buy Area)
       string buyTag = m_objPrefix + "BuyExhaustionTag";
       string bStatus = (m_activeArea.buyExhaustionLevel == EXHAUSTION_L0_FRESH) ? "Fresh" : StringFormat("%.1f%%", m_activeArea.buyMaxPenetrationPct);
       string bOrgStr = m_activeArea.hasOrganicFloor ? StringFormat("[Str%d|%s]", m_activeArea.floorStrength, m_activeArea.floorDNA) : "[Synthetic]";
@@ -811,7 +837,7 @@ private:
       ObjectSetInteger(0, buyTag, OBJPROP_FONTSIZE, 8);
       ObjectSetString(0, buyTag, OBJPROP_FONT, "Arial Bold");
 
-      // 7. Sell Exhaustion Label
+      // 7. Sell Exhaustion Label (75% - 100% Sell Area)
       string sellTag = m_objPrefix + "SellExhaustionTag";
       string sStatus = (m_activeArea.sellExhaustionLevel == EXHAUSTION_L0_FRESH) ? "Fresh" : StringFormat("%.1f%%", m_activeArea.sellMaxPenetrationPct);
       string sOrgStr = m_activeArea.hasOrganicRoof ? StringFormat("[Str%d|%s]", m_activeArea.roofStrength, m_activeArea.roofDNA) : "[Synthetic]";

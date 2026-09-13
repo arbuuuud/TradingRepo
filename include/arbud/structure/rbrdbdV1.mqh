@@ -1940,12 +1940,8 @@ private:
          double topPrice = MathMax(area.proximal, area.distal);
          double botPrice = MathMin(area.proximal, area.distal);
 
-         // End time: if invalid (100% used), stop exactly at the candle that consumed it!
-         datetime rectEndTime = futureTime;
-         if(area.isInvalid && area.invalidTime > 0)
-         {
-            rectEndTime = area.invalidTime;
-         }
+         // Width exactly 3 candles of the origin timeframe
+         datetime rectEndTime = area.baseStart + (PeriodSeconds(area.period) * 3);
 
          // Draw / Update Rectangle (or delete if hideRectangles is active)
          if(m_hideRectangles)
@@ -1971,84 +1967,19 @@ private:
             ObjectSetInteger(0, rectName, OBJPROP_STYLE, area.isInvalid ? STYLE_DOT : STYLE_SOLID);
          }
 
-         // Format status text concisely
-         string typeStr = (area.type == RBRDBD_RBR) ? "RBR" : "DBD";
-         string tfStr   = GetTFShortName(area.period);
-
-         // Base candle info
-         string cInfo;
-         if(area.isEscalated)
-            cInfo = StringFormat("%dC(M1:%d)", area.baseCandleCount, area.m1BaseCandleCount);
-         else
-            cInfo = StringFormat("%dC", area.baseCandleCount);
-
-         // Phase 2 Quality Score Info (Adaptive to Active Switches)
-         string scoreStr = "";
-         if(m_enablePhase2_4B && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A)
-         {
-            // Pure Phase 2.4B Test Mode (Isolated HTF Swing High/Low Reaction)
-            if(area.scorePhase2_4B > 0)
-               scoreStr = StringFormat("Sw:%s(%.0fpt|+1)", GetTFShortName(area.htfSwingTF), area.htfSwingDistPoints);
-            else
-               scoreStr = "no-Sw (0pt)";
-         }
-         else if(m_enablePhase2_4A && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4B)
-         {
-            // Pure Phase 2.4A Test Mode (Isolated HTF RBR/DBD Parent Reaction)
-            if(area.scorePhase2_4A > 0)
-               scoreStr = StringFormat("HTF:%s (+1pt)", GetTFShortName(area.htfZoneTF));
-            else
-               scoreStr = "no-HTF (0pt)";
-         }
-         else if(m_enablePhase2_3 && !m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_4A && !m_enablePhase2_4B)
-         {
-            // Pure Phase 2.3 Test Mode (Isolated FVG test)
-            if(area.scorePhase2_3 > 0)
-               scoreStr = StringFormat("FVG(%.0fpt|+1)", area.fvgGapPoints);
-            else
-               scoreStr = "no-FVG (0pt)";
-         }
-         else if(m_enablePhase2_1 && !m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A && !m_enablePhase2_4B)
-         {
-            // Pure Phase 2.1 Test Mode
-            if(area.scorePhase2_1 > 0)
-               scoreStr = StringFormat("T:%s (+1pt)", GetTFShortName(area.reflTF));
-            else
-               scoreStr = "no-Tight (0pt)";
-         }
-         else if(!m_enablePhase2_1 && m_enablePhase2_2 && !m_enablePhase2_3 && !m_enablePhase2_4A && !m_enablePhase2_4B)
-         {
-            // Pure Phase 2.2 Test Mode (Isolated BOS test)
-            if(area.scorePhase2_2 > 0)
-               scoreStr = "BOS (+1pt)";
-            else
-               scoreStr = "no-BOS (0pt)";
-         }
-         else
-         {
-            // Combined Phase 2 Mode: Clean DNA and Official Strength Display
-            scoreStr = StringFormat("%s %d★|Str%d", area.dnaCode, area.totalScore, area.strengthLevel);
-         }
-
-         // Retest/Status info
+         // Retest/Status info: Fresh or %
          string statusStr;
          if(area.isInvalid)
-            statusStr = "100% Mit";
+            statusStr = "100%";
          else if(area.consumptionPct > 0.0)
             statusStr = StringFormat("%.1f%%", area.consumptionPct);
          else
             statusStr = "Fresh";
 
-         // Phase 3 Buffer info (if enabled)
-         string bufStr = "";
-         if(m_enablePhase3 && area.bufferPoints > 0.0)
-         {
-            string bTag = (area.bufferType == BUFFER_TYPE_10_SWING) ? "10Sw" : "2xBase";
-            bufStr = StringFormat("|Buf:%.0fpt(%s)", area.bufferPoints, bTag);
-         }
-
-         // Combined concise label: e.g. " M1 RBR [2C|TBFH 4★|Str2|Buf:45pt(2xBase)] • Fresh"
-         string finalLabel = StringFormat(" %s %s [%s|%s%s] • %s", tfStr, typeStr, cInfo, scoreStr, bufStr, statusStr);
+         // Label Format: <Period>_TBFH_<Strength>_<Used %>
+         // Example: M1_TBFH_2_Fresh or M5_TBFH_1_35.5%
+         string tfStr = GetTFShortName(area.period);
+         string finalLabel = StringFormat(" %s_TBFH_%d_%s", tfStr, area.strengthLevel, statusStr);
 
          // High-contrast text color & positioning
          // For RBR (Demand): place text slightly below bottom edge
@@ -2085,183 +2016,20 @@ private:
          ObjectSetString(0, textName, OBJPROP_FONT, "Arial Bold");
          ObjectSetInteger(0, textName, OBJPROP_BACK, false); // Keep text explicitly in foreground
 
-         // Draw / Update BOS Horizontal Swing Reference Line (if BOS is passed and enabled)
-         string bosLineName = rectName + "_bos";
-         if(m_enablePhase2_2 && area.passBOS && area.bosBrokenLevel > 0.0 && area.bosSwingTime > 0)
-         {
-            datetime bosEndTime = area.legOutTime;
-            if(bosEndTime <= area.bosSwingTime) bosEndTime = area.baseEnd;
-
-            if(ObjectFind(0, bosLineName) < 0)
-            {
-               ObjectCreate(0, bosLineName, OBJ_TREND, 0, area.bosSwingTime, area.bosBrokenLevel, bosEndTime, area.bosBrokenLevel);
-            }
-            else
-            {
-               ObjectMove(0, bosLineName, 0, area.bosSwingTime, area.bosBrokenLevel);
-               ObjectMove(0, bosLineName, 1, bosEndTime, area.bosBrokenLevel);
-            }
-            ObjectSetInteger(0, bosLineName, OBJPROP_COLOR, (area.type == RBRDBD_RBR) ? clrAqua : clrOrangeRed);
-            ObjectSetInteger(0, bosLineName, OBJPROP_STYLE, STYLE_DASH);
-            ObjectSetInteger(0, bosLineName, OBJPROP_WIDTH, 1);
-            ObjectSetInteger(0, bosLineName, OBJPROP_RAY_RIGHT, false);
-            ObjectSetInteger(0, bosLineName, OBJPROP_BACK, true);
-         }
-         else
-         {
-            if(ObjectFind(0, bosLineName) >= 0)
-               ObjectDelete(0, bosLineName);
-         }
-
-         // Draw / Update Direct Attached FVG Visual Box (if FVG passed and enabled)
-         string fvgBoxName = rectName + "_fvg";
-         if(m_enablePhase2_3 && area.passDirectFVG && area.fvgTopPrice > 0.0 && area.fvgBotPrice > 0.0)
-         {
-            datetime fvgStart = area.fvgStartTime;
-            datetime fvgEnd   = futureTime; // Extend into future until retested or dynamic zone lifetime
-            if(area.isInvalid && area.invalidTime > 0)
-            {
-               fvgEnd = area.invalidTime;
-            }
-
-            double fvgHigh = MathMax(area.fvgTopPrice, area.fvgBotPrice);
-            double fvgLow  = MathMin(area.fvgTopPrice, area.fvgBotPrice);
-
-            color fvgColor = (area.type == RBRDBD_RBR) ? clrMediumSpringGreen : clrMediumOrchid;
-
-            if(ObjectFind(0, fvgBoxName) < 0)
-            {
-               ObjectCreate(0, fvgBoxName, OBJ_RECTANGLE, 0, fvgStart, fvgHigh, fvgEnd, fvgLow);
-            }
-            else
-            {
-               ObjectMove(0, fvgBoxName, 0, fvgStart, fvgHigh);
-               ObjectMove(0, fvgBoxName, 1, fvgEnd, fvgLow);
-            }
-            ObjectSetInteger(0, fvgBoxName, OBJPROP_COLOR, fvgColor);
-            ObjectSetInteger(0, fvgBoxName, OBJPROP_FILL, true);
-            ObjectSetInteger(0, fvgBoxName, OBJPROP_BACK, true); // Behind candles
-            ObjectSetInteger(0, fvgBoxName, OBJPROP_SELECTABLE, false);
-            ObjectSetInteger(0, fvgBoxName, OBJPROP_STYLE, STYLE_DOT);
-         }
-         else
-         {
-            if(ObjectFind(0, fvgBoxName) >= 0)
-               ObjectDelete(0, fvgBoxName);
-         }
-         // Draw / Update HTF Structural Swing Reference Line & Tag (if HTF Swing passed and enabled)
+         // Delete extra auxiliary lines (BOS, FVG, HTF Swing, Dynamic Buffer) to keep chart ultra-clean
+         string bosLineName   = rectName + "_bos";
+         string fvgBoxName    = rectName + "_fvg";
          string htfSwLineName = rectName + "_htfsw";
          string htfSwTagName  = rectName + "_htfsw_tag";
-         if(m_enablePhase2_4B && area.passHTFSwing && area.htfSwingLevel > 0.0 && area.htfSwingTime > 0)
-         {
-            datetime swEndTime = area.baseStart;
-            if(swEndTime <= area.htfSwingTime) swEndTime = area.baseEnd;
+         string bufLineName   = rectName + "_buf";
+         string bufTagName    = rectName + "_buftag";
 
-            color swColor = (area.type == RBRDBD_RBR) ? clrGold : clrDeepPink;
-
-            // 1. Horizontal Reference Trendline
-            if(ObjectFind(0, htfSwLineName) < 0)
-            {
-               ObjectCreate(0, htfSwLineName, OBJ_TREND, 0, area.htfSwingTime, area.htfSwingLevel, swEndTime, area.htfSwingLevel);
-            }
-            else
-            {
-               ObjectMove(0, htfSwLineName, 0, area.htfSwingTime, area.htfSwingLevel);
-               ObjectMove(0, htfSwLineName, 1, swEndTime, area.htfSwingLevel);
-            }
-            ObjectSetInteger(0, htfSwLineName, OBJPROP_COLOR, swColor);
-            ObjectSetInteger(0, htfSwLineName, OBJPROP_STYLE, STYLE_DASH);
-            ObjectSetInteger(0, htfSwLineName, OBJPROP_WIDTH, 2); // Thicker dashed line for HTF importance
-            ObjectSetInteger(0, htfSwLineName, OBJPROP_RAY_RIGHT, false);
-            ObjectSetInteger(0, htfSwLineName, OBJPROP_BACK, true);
-
-            // 2. Tag / Label at the HTF Swing origin point
-            string tagText;
-            if(area.type == RBRDBD_RBR)
-               tagText = StringFormat(" ▼ %s Swing Low (%.2f)", GetTFShortName(area.htfSwingTF), area.htfSwingLevel);
-            else
-               tagText = StringFormat(" ▲ %s Swing High (%.2f)", GetTFShortName(area.htfSwingTF), area.htfSwingLevel);
-
-            if(ObjectFind(0, htfSwTagName) < 0)
-            {
-               ObjectCreate(0, htfSwTagName, OBJ_TEXT, 0, area.htfSwingTime, area.htfSwingLevel);
-            }
-            else
-            {
-               ObjectMove(0, htfSwTagName, 0, area.htfSwingTime, area.htfSwingLevel);
-            }
-            ObjectSetString(0, htfSwTagName, OBJPROP_TEXT, tagText);
-            ObjectSetInteger(0, htfSwTagName, OBJPROP_COLOR, swColor);
-            ObjectSetInteger(0, htfSwTagName, OBJPROP_ANCHOR, (area.type == RBRDBD_RBR) ? ANCHOR_LEFT_UPPER : ANCHOR_LEFT_LOWER);
-            ObjectSetInteger(0, htfSwTagName, OBJPROP_FONTSIZE, 8);
-            ObjectSetString(0, htfSwTagName, OBJPROP_FONT, "Arial Bold");
-            ObjectSetInteger(0, htfSwTagName, OBJPROP_BACK, false);
-         }
-         else
-         {
-            if(ObjectFind(0, htfSwLineName) >= 0)
-               ObjectDelete(0, htfSwLineName);
-            if(ObjectFind(0, htfSwTagName) >= 0)
-               ObjectDelete(0, htfSwTagName);
-         }
-
-         // Draw / Update Phase 3 Dynamic Buffer Line & Label (Final Floor / Final Roof)
-         string bufLineName = rectName + "_buf";
-         string bufTagName  = rectName + "_buftag";
-         if(m_enablePhase3 && area.bufferPoints > 0.0 && area.finalBoundary > 0.0)
-         {
-            datetime bufStart = area.baseStart;
-            datetime bufEnd   = futureTime;
-            if(area.isInvalid && area.invalidTime > 0)
-            {
-               bufEnd = area.invalidTime;
-            }
-
-            color bufColor = (area.type == RBRDBD_RBR) ? clrMediumSeaGreen : clrCrimson;
-
-            // 1. Horizontal Buffer Line (Dashed)
-            if(ObjectFind(0, bufLineName) < 0)
-            {
-               ObjectCreate(0, bufLineName, OBJ_TREND, 0, bufStart, area.finalBoundary, bufEnd, area.finalBoundary);
-            }
-            else
-            {
-               ObjectMove(0, bufLineName, 0, bufStart, area.finalBoundary);
-               ObjectMove(0, bufLineName, 1, bufEnd, area.finalBoundary);
-            }
-            ObjectSetInteger(0, bufLineName, OBJPROP_COLOR, bufColor);
-            ObjectSetInteger(0, bufLineName, OBJPROP_STYLE, STYLE_DASHDOTDOT);
-            ObjectSetInteger(0, bufLineName, OBJPROP_WIDTH, 1);
-            ObjectSetInteger(0, bufLineName, OBJPROP_RAY_RIGHT, false);
-            ObjectSetInteger(0, bufLineName, OBJPROP_BACK, true);
-
-            // 2. Buffer Tag
-            string bTypeName = (area.bufferType == BUFFER_TYPE_10_SWING) ? "10-Sw" : "2xBase";
-            string boundaryName = (area.type == RBRDBD_RBR) ? "Final Floor" : "Final Roof";
-            string bTagText = StringFormat("── %s: %.2f [Buf: %.0fpt (%s)]", boundaryName, area.finalBoundary, area.bufferPoints, bTypeName);
-
-            if(ObjectFind(0, bufTagName) < 0)
-            {
-               ObjectCreate(0, bufTagName, OBJ_TEXT, 0, bufStart, area.finalBoundary);
-            }
-            else
-            {
-               ObjectMove(0, bufTagName, 0, bufStart, area.finalBoundary);
-            }
-            ObjectSetString(0, bufTagName, OBJPROP_TEXT, bTagText);
-            ObjectSetInteger(0, bufTagName, OBJPROP_COLOR, bufColor);
-            ObjectSetInteger(0, bufTagName, OBJPROP_ANCHOR, (area.type == RBRDBD_RBR) ? ANCHOR_LEFT_UPPER : ANCHOR_LEFT_LOWER);
-            ObjectSetInteger(0, bufTagName, OBJPROP_FONTSIZE, 7);
-            ObjectSetString(0, bufTagName, OBJPROP_FONT, "Arial");
-            ObjectSetInteger(0, bufTagName, OBJPROP_BACK, false);
-         }
-         else
-         {
-            if(ObjectFind(0, bufLineName) >= 0)
-               ObjectDelete(0, bufLineName);
-            if(ObjectFind(0, bufTagName) >= 0)
-               ObjectDelete(0, bufTagName);
-         }
+         if(ObjectFind(0, bosLineName) >= 0)   ObjectDelete(0, bosLineName);
+         if(ObjectFind(0, fvgBoxName) >= 0)    ObjectDelete(0, fvgBoxName);
+         if(ObjectFind(0, htfSwLineName) >= 0) ObjectDelete(0, htfSwLineName);
+         if(ObjectFind(0, htfSwTagName) >= 0)  ObjectDelete(0, htfSwTagName);
+         if(ObjectFind(0, bufLineName) >= 0)   ObjectDelete(0, bufLineName);
+         if(ObjectFind(0, bufTagName) >= 0)    ObjectDelete(0, bufTagName);
       }
 
       ChartRedraw(0);
