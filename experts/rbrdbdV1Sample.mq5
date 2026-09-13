@@ -46,6 +46,9 @@ input int               InpMaxPosPerSide     = 5;                 // Max Positio
 input double            InpFixedLot          = 0.01;              // Fixed Lot per Limit Order
 input ulong             InpMagicNumber       = 888222;            // EA Magic Number
 
+input group "=== Phase 7 Tester & Data Analytics ==="
+input bool              InpAllowStrength0    = true;              // Allow Strength 0 in TradingArea & Limit Order (for Testing)
+
 input group "=== Dynamic Memory & Garbage Collection ==="
 input bool              InpEnableGC          = true;              // Enable Dynamic Garbage Collection
 input int               InpMaxMemoryBars     = 1500;              // Max Zone Age in M1 Bars before Purge
@@ -97,9 +100,11 @@ int OnInit()
    // 3. Configure TradingArea Manager
    ExtTradingArea.SetDrawEnabled(InpDrawTradingArea);
    ExtTradingArea.SetBaseTF(PERIOD_M1);
+   ExtTradingArea.SetAllowStrength0(InpAllowStrength0);
 
    // 4. Configure Proactive Limit Placer
    ExtLimitPlacer.Init(_Symbol, InpMagicNumber, InpMaxPosPerSide, InpFixedLot);
+   ExtLimitPlacer.SetAllowStrength0(InpAllowStrength0);
 
    PrintFormat("[rbrdbdV1Sample] Initialized on %s (PERIOD_M1). Total active zones: %d", 
                _Symbol, ExtRBRDBD.GetValidAreasCount(PERIOD_M1));
@@ -251,8 +256,9 @@ void OnTick()
             string bExh = (area.buyExhaustionLevel == EXHAUSTION_L0_FRESH) ? "Fresh" : StringFormat("%.1f%%", area.buyMaxPenetrationPct);
             string sExh = (area.sellExhaustionLevel == EXHAUSTION_L0_FRESH) ? "Fresh" : StringFormat("%.1f%%", area.sellMaxPenetrationPct);
 
-            string bOrderOK = area.hasOrganicFloor && area.floorStrength >= 1 ? "READY" : "BLOCKED";
-            string sOrderOK = area.hasOrganicRoof  && area.roofStrength >= 1  ? "READY" : "BLOCKED";
+            int minReqStr = InpAllowStrength0 ? 0 : 1;
+            string bOrderOK = area.hasOrganicFloor && area.floorStrength >= minReqStr ? "READY" : "BLOCKED";
+            string sOrderOK = area.hasOrganicRoof  && area.roofStrength  >= minReqStr ? "READY" : "BLOCKED";
 
             int openBuyPos  = ExtLimitPlacer.CountOpenPositionsByType(POSITION_TYPE_BUY);
             int activeBuyLim = ExtLimitPlacer.CountPendingOrdersByType(ORDER_TYPE_BUY_LIMIT);

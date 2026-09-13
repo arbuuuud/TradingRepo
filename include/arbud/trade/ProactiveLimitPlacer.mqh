@@ -25,6 +25,7 @@ private:
    double               m_fixedLotSize;      // Lot size per grid position (e.g. 0.01)
    string               m_symbol;
    ulong                m_orderDeviation;
+   bool                 m_allowStrength0;            // Allow limit orders on Strength 0 zones
    datetime             m_lastSyncTime;              // Debounce timer: prevents multiple requests per second
    datetime             m_lastTrackedFloorBaseStart; // Tracks active Floor zone origin time
    datetime             m_lastTrackedRoofBaseStart;  // Tracks active Roof zone origin time
@@ -35,6 +36,7 @@ public:
                              m_fixedLotSize(0.01),
                              m_symbol(""),
                              m_orderDeviation(10),
+                             m_allowStrength0(false),
                              m_lastSyncTime(0),
                              m_lastTrackedFloorBaseStart(0),
                              m_lastTrackedRoofBaseStart(0)
@@ -44,6 +46,8 @@ public:
    ~CProactiveLimitPlacer()
    {
    }
+
+   void SetAllowStrength0(const bool allow) { m_allowStrength0 = allow; }
 
    //+------------------------------------------------------------------+
    //| Initialization                                                   |
@@ -424,8 +428,9 @@ public:
 
             if(oType == ORDER_TYPE_BUY_LIMIT)
             {
+               int minReqStr = m_allowStrength0 ? 0 : 1;
                // If Floor is invalid/synthetic, or order price is outside [buyZoneStart, buyZoneEnd]
-               if(!area.hasOrganicFloor || area.floorStrength < 1 ||
+               if(!area.hasOrganicFloor || area.floorStrength < minReqStr ||
                   oPrice < (area.buyZoneStart - (5.0 * _Point)) || oPrice > (area.buyZoneEnd + (5.0 * _Point)))
                {
                   m_trade.OrderDelete(ticket);
@@ -433,8 +438,9 @@ public:
             }
             else if(oType == ORDER_TYPE_SELL_LIMIT)
             {
+               int minReqStr = m_allowStrength0 ? 0 : 1;
                // If Roof is invalid/synthetic, or order price is outside [sellZoneStart, sellZoneEnd]
-               if(!area.hasOrganicRoof || area.roofStrength < 1 ||
+               if(!area.hasOrganicRoof || area.roofStrength < minReqStr ||
                   oPrice < (area.sellZoneStart - (5.0 * _Point)) || oPrice > (area.sellZoneEnd + (5.0 * _Point)))
                {
                   m_trade.OrderDelete(ticket);
@@ -451,9 +457,10 @@ public:
    {
       // 1. Invalidation / Exclusion Checks:
       // - Must have organic RBR
-      // - Strength must be >= 1 (Str 0 rejected)
+      // - Strength must be >= minReqStr (Str 0 allowed if m_allowStrength0)
       // - Exhaustion Level must be < Level 5
-      if(!area.hasOrganicFloor || area.floorStrength < 1 || area.buyExhaustionLevel >= EXHAUSTION_L5_EXHAUSTED)
+      int minReqStr = m_allowStrength0 ? 0 : 1;
+      if(!area.hasOrganicFloor || area.floorStrength < minReqStr || area.buyExhaustionLevel >= EXHAUSTION_L5_EXHAUSTED)
       {
          CancelPendingOrdersByType(ORDER_TYPE_BUY_LIMIT);
          return;
@@ -550,9 +557,10 @@ public:
    {
       // 1. Invalidation / Exclusion Checks:
       // - Must have organic DBD
-      // - Strength must be >= 1 (Str 0 rejected)
+      // - Strength must be >= minReqStr (Str 0 allowed if m_allowStrength0)
       // - Exhaustion Level must be < Level 5
-      if(!area.hasOrganicRoof || area.roofStrength < 1 || area.sellExhaustionLevel >= EXHAUSTION_L5_EXHAUSTED)
+      int minReqStr = m_allowStrength0 ? 0 : 1;
+      if(!area.hasOrganicRoof || area.roofStrength < minReqStr || area.sellExhaustionLevel >= EXHAUSTION_L5_EXHAUSTED)
       {
          CancelPendingOrdersByType(ORDER_TYPE_SELL_LIMIT);
          return;

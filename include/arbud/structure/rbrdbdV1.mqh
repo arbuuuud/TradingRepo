@@ -607,9 +607,9 @@ public:
    //+------------------------------------------------------------------+
    //| Find Nearest Valid Floor (RBR) whose final boundary is below price|
    //| Rule: Price must not have breached final boundary (distal-buffer)|
-   //| Rule: Ignore any zone with Strength 0 (Weak/Unqualified)         |
+   //| Rule: Min Strength filter (0 allows raw/weak zones, 1 requires 2★)|
    //+------------------------------------------------------------------+
-   bool FindNearestFloor(const ENUM_TIMEFRAMES tf, const double price, SRBRDBDArea &outFloor)
+   bool FindNearestFloor(const ENUM_TIMEFRAMES tf, const double price, SRBRDBDArea &outFloor, const int minStrength = 1)
    {
       int idx = FindTFIndex(tf);
       if(idx < 0) return false;
@@ -623,8 +623,8 @@ public:
          if(m_tfList[idx].areas[i].isInvalid) continue;
          if(m_tfList[idx].areas[i].type != RBRDBD_RBR) continue;
 
-         // IGNORE STRENGTH 0: Minimum Strength 1 (2 stars) required to qualify as Floor
-         if(m_tfList[idx].areas[i].strengthLevel < 1) continue;
+         // FILTER STRENGTH: Check against required minimum strength level
+         if(m_tfList[idx].areas[i].strengthLevel < minStrength) continue;
 
          // Boundary check: Floor must be below current price (not fully breached downwards)
          double floorBoundary = m_tfList[idx].areas[i].finalBoundary;
@@ -648,9 +648,9 @@ public:
    //+------------------------------------------------------------------+
    //| Find Nearest Valid Roof (DBD) whose final boundary is above price |
    //| Rule: Price must not have breached final boundary (distal+buffer)|
-   //| Rule: Ignore any zone with Strength 0 (Weak/Unqualified)         |
+   //| Rule: Min Strength filter (0 allows raw/weak zones, 1 requires 2★)|
    //+------------------------------------------------------------------+
-   bool FindNearestRoof(const ENUM_TIMEFRAMES tf, const double price, SRBRDBDArea &outRoof)
+   bool FindNearestRoof(const ENUM_TIMEFRAMES tf, const double price, SRBRDBDArea &outRoof, const int minStrength = 1)
    {
       int idx = FindTFIndex(tf);
       if(idx < 0) return false;
@@ -664,8 +664,8 @@ public:
          if(m_tfList[idx].areas[i].isInvalid) continue;
          if(m_tfList[idx].areas[i].type != RBRDBD_DBD) continue;
 
-         // IGNORE STRENGTH 0: Minimum Strength 1 (2 stars) required to qualify as Roof
-         if(m_tfList[idx].areas[i].strengthLevel < 1) continue;
+         // FILTER STRENGTH: Check against required minimum strength level
+         if(m_tfList[idx].areas[i].strengthLevel < minStrength) continue;
 
          // Boundary check: Roof must be above current price (not fully breached upwards)
          double roofBoundary = m_tfList[idx].areas[i].finalBoundary;

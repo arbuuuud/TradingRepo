@@ -160,6 +160,7 @@ private:
    string               m_objPrefix;
    bool                 m_drawEnabled;
    ENUM_TIMEFRAMES      m_baseTF;
+   bool                 m_allowStrength0;
 
    // Visual colors
    color                m_clrBuyArea;
@@ -173,6 +174,7 @@ public:
                                  m_objPrefix("LTA_"),
                                  m_drawEnabled(true),
                                  m_baseTF(PERIOD_M1),
+                                 m_allowStrength0(false),
                                  m_clrBuyArea(C'20,60,35'),    // Dark subtle green
                                  m_clrSellArea(C'60,20,25'),   // Dark subtle maroon
                                  m_clrTP50(clrDodgerBlue),
@@ -189,6 +191,7 @@ public:
 
    void SetDrawEnabled(const bool enable) { m_drawEnabled = enable; }
    void SetBaseTF(const ENUM_TIMEFRAMES tf) { m_baseTF = tf; }
+   void SetAllowStrength0(const bool allow) { m_allowStrength0 = allow; }
 
    SLivingTradingArea GetActiveArea() const { return m_activeArea; }
    bool HasValidArea() const { return m_activeArea.isValid; }
@@ -228,8 +231,9 @@ public:
          {
             SRBRDBDArea curFloor, curRoof;
             curFloor.Init(); curRoof.Init();
-            bool hasOrganicFloor = rbrdbdEngine.FindNearestFloor(m_baseTF, midPrice, curFloor);
-            bool hasOrganicRoof  = rbrdbdEngine.FindNearestRoof(m_baseTF, midPrice, curRoof);
+            int minReqStr = m_allowStrength0 ? 0 : 1;
+            bool hasOrganicFloor = rbrdbdEngine.FindNearestFloor(m_baseTF, midPrice, curFloor, minReqStr);
+            bool hasOrganicRoof  = rbrdbdEngine.FindNearestRoof(m_baseTF, midPrice, curRoof, minReqStr);
 
             // Check if a newer / closer valid Floor has formed
             if(hasOrganicFloor)
@@ -438,8 +442,9 @@ private:
       floorZone.Init();
       roofZone.Init();
 
-      bool hasFloor = rbrdbdEngine.FindNearestFloor(m_baseTF, midPrice, floorZone);
-      bool hasRoof  = rbrdbdEngine.FindNearestRoof(m_baseTF, midPrice, roofZone);
+      int minReqStr = m_allowStrength0 ? 0 : 1;
+      bool hasFloor = rbrdbdEngine.FindNearestFloor(m_baseTF, midPrice, floorZone, minReqStr);
+      bool hasRoof  = rbrdbdEngine.FindNearestRoof(m_baseTF, midPrice, roofZone, minReqStr);
 
       // If neither floor nor roof found, cannot establish corridor yet
       if(!hasFloor && !hasRoof)
