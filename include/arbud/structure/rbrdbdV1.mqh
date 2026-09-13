@@ -1976,10 +1976,10 @@ private:
          else
             statusStr = "Fresh";
 
-         // Label Format: <Period>_TBFH_<Strength>_<Used %>
-         // Example: M1_TBFH_2_Fresh or M5_TBFH_1_35.5%
+         // Label Format: <Period>_<DNA>_<Strength>_<Used %>
+         // Example: M1_TBFH_2_Fresh, M1_TB-H_2_Fresh, or M5_T--H_1_35.5%
          string tfStr = GetTFShortName(area.period);
-         string finalLabel = StringFormat(" %s_TBFH_%d_%s", tfStr, area.strengthLevel, statusStr);
+         string finalLabel = StringFormat(" %s_%s_%d_%s", tfStr, area.dnaCode, area.strengthLevel, statusStr);
 
          // High-contrast text color & positioning
          // For RBR (Demand): place text slightly below bottom edge
