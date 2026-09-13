@@ -26,26 +26,26 @@ Sistem ini merevolusi penentuan range harga dengan memisahkan tanggung jawab ke 
 [ PHASE 1: Pure M1 RBR/DBD Memory & Lifecycle ] 
        │
        ▼
-[ PHASE 2: RBR/DBD Strength Scoring Sub-Modules (0, 1, 2) ]
-       ├─► Phase 2.1: Base Tightness & MTF Reflection (M5/M15)
-       ├─► Phase 2.2: BOS / ChoCH Wajib Body Close
-       ├─► Phase 2.3: Direct Attached FVG (Magnet Retest)
-       └─► Phase 2.4: HTF POI Reaction (Anti-No Man's Land: Parent Zone & Structure Swing)
+[ PHASE 2: RBR/DBD Strength Scoring (DNA: T-B-F-H) ]
+       ├─► Phase 2.1: Base Tightness & MTF Reflection (T)
+       ├─► Phase 2.2: BOS / ChoCH Wajib Body Close (B)
+       ├─► Phase 2.3: Direct Attached FVG (F)
+       └─► Phase 2.4: HTF POI Reaction (H: Parent Zone & Structure Swing)
        │
        ▼
 [ PHASE 3: Dynamic Buffer Calculation (10-Candle Swing vs 2x Base) ]
        │
        ▼
-[ PHASE 4: Living TradingArea Engine & 6-Stage Exhaustion State Machine ]
+[ PHASE 4: Living TradingArea Engine (3-Cascade Condition & 6-Stage Exhaustion) ]
        │
        ▼
-[ PHASE 5: Agent Proactive Limit Order Grid (Dynamic Allocation & Depth Mapping) ]
+[ PHASE 5: Proactive Limit Order Placer (Virgin Depth Mapping & Dynamic Capacity) ]
        │
        ▼
-[ PHASE 6: Agent Proactive Loss Prevention (Price Action & Counter RBR/DBD Guard) ]
+[ PHASE 6: Proactive Loss Prevention (Clash of Strength, BE Evacuation, Unified Batch Exit) ]
        │
        ▼
-[ PHASE 7: Integrated End-to-End Simulation & Verification ]
+[ PHASE 7: Strategy Tester TSV Analytics & RBR/DBD DNA Probability Engine ] ◄── [SEDANG BERJALAN DI SINI]
 ```
 
 ---
@@ -350,14 +350,16 @@ Diberikan parameter input `Max_Pos_per_Trading_Area` (misal $= 10$ posisi):
 | Phase | Komponen Utama | Milestone Deliverables | Target File | Status |
 |---|---|---|---|:---:|
 | **1** | M1 Memory & MTF Escalation | Storage dinamis, cleanup invalid, & recursive TF climb (1-3 candle base) | `rbrdbdV1.mqh` | 🟢 Selesai (Tested) |
-| **2.1** | Base Tightness & MTF Refl | Bobot +1 poin: Base padat $\le 60\%$ body & 1-3 candle di M5/M15 | `rbrdbdV1.mqh` | 🟡 Siap Desain |
-| **2.2** | BOS/ChoCH Body Close | Bobot +1 poin: Wajib close menembus swing, tolak wick sweep | `rbrdbdV1.mqh` | ⚪ Menunggu 2.1 |
-| **2.3** | Direct Attached FVG | Bobot +1 poin: Celah $\ge 50$ pts menempel langsung di batas base | `rbrdbdV1.mqh` | ⚪ Menunggu 2.2 |
-| **2.4** | HTF POI Reaction Gate | Bobot +1 poin: Reaksi dari M15/H1 POI, tolak No Man's Land | `rbrdbdV1.mqh` | ⚪ Menunggu 2.3 |
-| **2.5** | Liquidity Sweep / Big Figure | Bobot +1 poin: Sweep di level bulat ($xx00, $xx50) atau EQH/EQL | `rbrdbdV1.mqh` | ⚪ Menunggu 2.4 |
-| **2 Final** | Strength Aggregator (0, 1, 2) | Klasifikasi final Str 0, 1, 2 + visual warna badge di chart | `rbrdbdV1.mqh` | ⚪ Menunggu 2.5 |
-| **3** | Min-Variance Buffer Engine | Evaluasi $\min(\text{Swing}_{10}, 2\times\text{Base})$ untuk Floor & Roof | `rbrdbdV1.mqh` | ⚪ Menunggu Ph 2 |
-| **4** | Living TradingArea & State 0–5 | Objek living area, 6-level exhaustion, Hard TP/SL | `TradingArea.mqh` | ⚪ Menunggu Ph 3 |
+| **2.1** | Base Tightness & MTF Refl | Bobot +1 poin: Base padat $\le 0.80\times$ LegOut & 1-3 candle di M5/M15 (Pilar T) | `rbrdbdV1.mqh` | 🟢 Selesai (Tested) |
+| **2.2** | BOS/ChoCH Body Close | Bobot +1 poin: Wajib body close menembus swing origin TF (Pilar B) | `rbrdbdV1.mqh` | 🟢 Selesai (Tested) |
+| **2.3** | Direct Attached FVG | Bobot +1 poin: Celah $\ge 50$ pts menempel langsung di LegOut (Pilar F) | `rbrdbdV1.mqh` | 🟢 Selesai (Tested) |
+| **2.4** | HTF POI Reaction Gate | Bobot +1 poin: Reaksi dari M15/H1 Zone (2.4A) atau Swing (2.4B) (Pilar H) | `rbrdbdV1.mqh` | 🟢 Selesai (Tested) |
+| **2 Final** | 4-Star DNA & Strength (0, 1, 2) | Klasifikasi final Str 0, 1, 2 + DNA `TBFH` badge & labels | `rbrdbdV1.mqh` | 🟢 Selesai (Tested) |
+| **3** | Min-Variance Buffer Engine | Evaluasi $\min(\text{Swing}_{10}, 2\times\text{Base})$ untuk Floor & Roof | `rbrdbdV1.mqh` | 🟢 Selesai (Tested) |
+| **4** | Living TradingArea & State 0–5 | Objek living area, 3-Cascade Fallback, 6-level exhaustion, Hard TP 50% / SL | `LivingTradingArea.mqh` | 🟢 Selesai (Tested) |
+| **5** | Proactive Limit Order Grid | Fresh virgin depth mapping, dynamic capacity decay L0->L5, Hard TP 50% | `ProactiveLimitPlacer.mqh` | 🟢 Selesai (Tested) |
+| **6** | Proactive Loss Prevention | Clash of Strength, Break Even + Spread buffer evacuation, Unified Batch Exit | `ProactiveLimitPlacer.mqh` | 🟢 Selesai (Tested) |
+| **7** | TSV Analytics & Tester Engine | TSV Logger, DNA Probability Matrix, Allow Str0 Switch, AI Analytics | `TradeDataLogger.mqh`, `docs/` | 🟡 Sedang Berjalan |
 | **5** | Agent Proactive Limit Order | Kuota dinamis, fresh depth grid, auto-cancel pada TP | `AgentGridPlacer.mqh` | ⚪ Menunggu Ph 4 |
 | **6** | Proactive Loss Prevention | Cut Profit (Engulfing/Counter-zone) & Period-Aware Cut Loss (Close outside buffer) | `AgentLossGuard.mqh` | ⚪ Menunggu Ph 5 |
 | **7** | Integrated EA & Backtest Suite | Demonstrator terpadu & pengujian di XAUUSD M1 | `rbrdbdV2Sample.mq5` | ⚪ Menunggu Ph 6 |

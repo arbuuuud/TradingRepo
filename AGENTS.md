@@ -6,16 +6,44 @@
 
 ---
 
-## 📊 Ringkasan Project
+## 📊 Ringkasan Project & Dokumen Acuan
 
 | Folder / File | Deskripsi | Target di Wine MT5 |
 |---|---|---|
 | `experts/` | Berisi file utama EA (`.mq5`) | Symlinked ke `MQL5/Experts/TradingRepo` |
+| `include/arbud/structure/` | Core Engine RBR/DBD & LivingTradingArea | Symlinked ke `MQL5/Include/TradingRepo` |
+| `include/arbud/trade/` | Limit Placer, Loss Prevention, & TSV Logger | Symlinked ke `MQL5/Include/TradingRepo` |
 | `include/MTFStructure/` | Core Multi-Timeframe Structure Engine | Symlinked ke `MQL5/Include/TradingRepo` |
 | `include/TradeManager/` | Smart SL/TP, BE, EOD 23:55 Force Exit | Symlinked ke `MQL5/Include/TradingRepo` |
 | `include/Strategy/` | Pluggable Strategy Entry Engines (Base + M3 SMC, etc.) | Symlinked ke `MQL5/Include/TradingRepo` |
-| `scripts/` | Script otomasi symlink & kompilasi Wine | - |
+| `scripts/` | Script otomasi symlink, kompilasi Wine, & TSV analytics | - |
 | `.pi/` | Definisi Subagents & Skills | - |
+| `docs/rbr-dbd-implementation-plan-and-test-matrix.md` | **Master Roadmap & Status Tracking Phase 1 - 7** | - |
+| `docs/rbr-dbd-high-probability-generator-spec.md` | Spesifikasi 4 Pilar RBR/DBD (T-B-F-H DNA) | - |
+| `docs/strategy-tester-tsv-analytics-guide.md` | Panduan AI Operator untuk Analisis Strategy Tester TSV | - |
+
+---
+
+## 🚦 Status Fase Kerja Saat Ini (Active Phase Tracking)
+
+> **Posisi Saat Ini:** **PHASE 7: Strategy Tester TSV Analytics & RBR/DBD DNA Probability Engine**  
+> **Branch Git Aktif:** `feat/phase7-strategy-tester-tsv-analytics`  
+> **Langkah Aktif (Current Step):** **Step 2 — Switch Input & Penurunan Filter Strength 0 untuk Testing**
+
+### Ringkasan Status Phase:
+- ✅ **Phase 1**: M1 Memory Pool, Dynamic GC, & Recursive MTF Base Scanner (Selesai)
+- ✅ **Phase 2**: 4 Pilar Kualitas RBR/DBD (`TBFH` DNA, Star Scoring 0-4★, Strength 0/1/2) (Selesai)
+- ✅ **Phase 3**: Dynamic Buffer Calculation (`min(10-Swing, 2x Base)`) (Selesai)
+- ✅ **Phase 4**: `LivingTradingArea.mqh` (3-Cascade Fallback, 6-Stage L0-L5 Exhaustion, Adaptive M5 Swing) (Selesai)
+- ✅ **Phase 5**: `ProactiveLimitPlacer.mqh` (Virgin Depth Mapping, Anchor Orders, Dynamic Capacity) (Selesai)
+- ✅ **Phase 6**: Proactive Loss Prevention (Clash of Strength, BE+ Evacuation, Unified Weighted Batch Exit) (Selesai)
+- 🟡 **Phase 7**: **Strategy Tester TSV Analytics & RBR/DBD DNA Probability Engine** (SEDANG BERJALAN)
+  - [x] Step 1: Dokumentasi & Blueprint Arsitektur (`docs/strategy-tester-tsv-analytics-guide.md`)
+  - [ ] Step 2: Switch Input & Penurunan Filter Strength 0 (`InpAllowStrength0`)
+  - [ ] Step 3: Modul Logger TSV MQL5 (`TradeDataLogger.mqh`)
+  - [ ] Step 4: Subagent (`ea-data-scientist`) & Skill Analytics (`mql5-tester-analytics`)
+  - [ ] Step 5: Skrip CLI Node.js/Bun Think-in-Code Analyzer (`scripts/analyze-tester-results.js`)
+  - [ ] Step 6: Uji Coba Strategy Tester & Review Data Pertama
 
 ---
 
