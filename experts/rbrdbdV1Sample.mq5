@@ -14,6 +14,7 @@
 #include "..\include\arbud\structure\rbrdbdV1.mqh"
 #include "..\include\arbud\structure\LivingTradingArea.mqh"
 #include "..\include\arbud\trade\ProactiveLimitPlacer.mqh"
+#include "..\include\arbud\trade\TradeDataLogger.mqh"
 
 //+------------------------------------------------------------------+
 //| Inputs                                                           |
@@ -48,6 +49,7 @@ input ulong             InpMagicNumber       = 888222;            // EA Magic Nu
 
 input group "=== Phase 7 Tester & Data Analytics ==="
 input bool              InpAllowStrength0    = true;              // Allow Strength 0 in TradingArea & Limit Order (for Testing)
+input bool              InpEnableTradeLogger = true;              // Enable Strategy Tester TSV Data Logger
 
 input group "=== Dynamic Memory & Garbage Collection ==="
 input bool              InpEnableGC          = true;              // Enable Dynamic Garbage Collection
@@ -66,6 +68,7 @@ input color             InpColorMitigated    = clrGray;           // Fully Mitig
 CRBRDBDV1                 ExtRBRDBD;
 CLivingTradingAreaManager ExtTradingArea;
 CProactiveLimitPlacer     ExtLimitPlacer;
+CTradeDataLogger          ExtDataLogger;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -106,6 +109,12 @@ int OnInit()
    ExtLimitPlacer.Init(_Symbol, InpMagicNumber, InpMaxPosPerSide, InpFixedLot);
    ExtLimitPlacer.SetAllowStrength0(InpAllowStrength0);
 
+   // 5. Configure Strategy Tester Data Logger
+   if(InpEnableTradeLogger)
+   {
+      ExtDataLogger.Init(_Symbol, InpMagicNumber, PERIOD_M1);
+   }
+
    PrintFormat("[rbrdbdV1Sample] Initialized on %s (PERIOD_M1). Total active zones: %d", 
                _Symbol, ExtRBRDBD.GetValidAreasCount(PERIOD_M1));
 
@@ -123,6 +132,12 @@ void OnDeinit(const int reason)
 
    // Cancel any pending limit orders when removed
    ExtLimitPlacer.CancelAllPendingOrders();
+
+   // Close Data Logger file
+   if(InpEnableTradeLogger)
+   {
+      ExtDataLogger.CloseFile();
+   }
 
    PrintFormat("=== [rbrdbdV1Sample] Deinitialized. Objects cleared. Reason: %d ===", reason);
 }
@@ -294,6 +309,19 @@ void OnTick()
                            qualityBreakdown,
                            InpEnableGC ? "ENABLED" : "DISABLED", InpMaxMemoryBars, InpPurgeDistMult,
                            bid, ask, tradingAreaHUD));
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Trade Transaction Handler for High-Fidelity Logging             |
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest &request,
+                        const MqlTradeResult &result)
+{
+   if(InpEnableTradeLogger)
+   {
+      ExtDataLogger.OnTransaction(trans, request, result);
    }
 }
 //+------------------------------------------------------------------+
