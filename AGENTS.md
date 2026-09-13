@@ -28,7 +28,7 @@
 
 > **Posisi Saat Ini:** **PHASE 7: Strategy Tester TSV Analytics & RBR/DBD DNA Probability Engine**  
 > **Branch Git Aktif:** `feat/phase7-strategy-tester-tsv-analytics`  
-> **Langkah Aktif (Current Step):** **Step 4 — Subagent (`ea-data-scientist`) & Skill Analytics (`mql5-tester-analytics`)**
+> **Langkah Aktif (Current Step):** **Step 5 — Skrip CLI Node.js/Bun Think-in-Code Analyzer (`scripts/analyze-tester-results.js`)**
 
 ### Ringkasan Status Phase:
 - ✅ **Phase 1**: M1 Memory Pool, Dynamic GC, & Recursive MTF Base Scanner (Selesai)
@@ -41,7 +41,7 @@
   - [x] Step 1: Dokumentasi & Blueprint Arsitektur (`docs/strategy-tester-tsv-analytics-guide.md`)
   - [x] Step 2: Switch Input & Penurunan Filter Strength 0 (`InpAllowStrength0`)
   - [x] Step 3: Modul Logger TSV MQL5 (`TradeDataLogger.mqh`)
-  - [ ] Step 4: Subagent (`ea-data-scientist`) & Skill Analytics (`mql5-tester-analytics`)
+  - [x] Step 4: Subagent (`ea-data-scientist`) & Skill Analytics (`mql5-tester-analytics`)
   - [ ] Step 5: Skrip CLI Node.js/Bun Think-in-Code Analyzer (`scripts/analyze-tester-results.js`)
   - [ ] Step 6: Uji Coba Strategy Tester & Review Data Pertama
 
@@ -56,11 +56,13 @@
 | `ea-architect` | Merancang konsep strategi 3-tier MTF, parameter input, dan model risk management | `/run ea-architect "Rancang strategi Scalping M1 dengan HTF Bias H1/M15"` |
 | `dev-mql5` | Menulis/mengedit kode MQL5 modular, optimasi OnCandleClose vs OnTick/OnTimer | `/run dev-mql5 "Implementasikan M15 Breakout Engine ke MTFStructureEA"` |
 | `ea-reviewer` | Mengaudit kode untuk memory leak, CPU load MTF, validasi broker & SL/BE logic | `/run ea-reviewer "Audit MTFStructureEA.mq5 untuk kesiapan live"` |
+| `ea-data-scientist` | Menganalisis TSV hasil Strategy Tester, menghitung probabilitas DNA, dan merekomendasikan optimasi parameter | `/run ea-data-scientist "Analisis file TSV terbaru dan buat ranking DNA"` |
 
 ### Skills (Technical Reference)
 
 | Skill | Topik | Path |
 |---|---|---|
+| `mql5-tester-analytics` | Schema 20 kolom TSV, formula probabilitas DNA, dan evaluasi hasil Strategy Tester | `.pi/skills/mql5-tester-analytics/SKILL.md` |
 | `mql5-mtf-structure` | 3-tier MTF hierarchy, Main vs Internal HH/HL, TF whitelist, Candle Close events | `.pi/skills/mql5-mtf-structure/SKILL.md` |
 | `mql5-trade-manager` | OnTick vs OnTimer division, Dynamic Lot (% risk vs entry-SL), BE, EOD 23:55 exit | `.pi/skills/mql5-trade-manager/SKILL.md` |
 | `mql5-core` | MQL5 lifecycle, CTrade library, indicator handle, strict syntax rules | `.pi/skills/mql5-core/SKILL.md` |
