@@ -149,6 +149,22 @@ public:
    }
 
    //+------------------------------------------------------------------+
+   //| Parse Timeframe from order/position comment                      |
+   //| e.g. "RBR:M1:TBFH:S2:L0" -> returns PERIOD_M1                   |
+   //+------------------------------------------------------------------+
+   ENUM_TIMEFRAMES ParseTFFromComment(const string comment, const ENUM_TIMEFRAMES fallbackTF = PERIOD_M1) const
+   {
+      string parts[];
+      int count = StringSplit(comment, ':', parts);
+      if(count >= 2)
+      {
+         ENUM_TIMEFRAMES parsed = CRBRDBDV1::ParseTFShortName(parts[1]);
+         if(parsed != PERIOD_CURRENT) return parsed;
+      }
+      return fallbackTF;
+   }
+
+   //+------------------------------------------------------------------+
    //| Parse Strength level from order/position comment                 |
    //| e.g. "RBR:M1:TBFH:S2:L0" -> returns 2                            |
    //+------------------------------------------------------------------+
@@ -415,6 +431,236 @@ public:
                   continue;
                }
                m_trade.OrderModify(ticket, oPrice, newSL, newTP, ORDER_TIME_GTC, 0);
+            }
+         }
+      }
+   }
+
+   //+------------------------------------------------------------------+
+   //| Proactive Evacuation & Dynamic Depth Risk Manager               |
+   //| 1. Candle Close Breach: If Bar 1 closes outside Floor/Roof       |
+   //|    -> Move Hard SL to Candle Extreme (or Force Close if invalid) |
+   //| 2. Fibonacci Depth Scaling:                                      |
+   //|    - 1-2 Pos (Shallow) -> Full TP 50% + Ratchet BE               |
+   //|    - 3 Pos (Moderate)  -> TP 38.2% Corridor + Early BE           |
+   //|    - 4-5 Pos (Deep)    -> Emergency Unified Evacuation (BE+)     |
+   //+------------------------------------------------------------------+
+   void ManageOpenPositionsRisk(const SLivingTradingArea &area,
+                                const double currentBid,
+                                const double currentAsk)
+   {
+      double spreadBufferPoints = 32.0 * _Point;  // 32 points ($0.32) spread buffer on Gold
+      double minStopPoints      = MathMax((double)SymbolInfoInteger(m_symbol, SYMBOL_TRADE_STOPS_LEVEL), 20.0) * _Point;
+
+      // --- STEP 1: CALCULATE WEIGHTED AVERAGE ENTRY & METRICS PER SIDE ---
+      double totalBuyLots = 0.0, sumBuyPriceLots = 0.0;
+      double totalSellLots = 0.0, sumSellPriceLots = 0.0;
+      int buyCount = 0, sellCount = 0;
+
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket <= 0) continue;
+
+         if(PositionGetString(POSITION_SYMBOL) == m_symbol &&
+            PositionGetInteger(POSITION_MAGIC) == (long)m_magicNumber)
+         {
+            ENUM_POSITION_TYPE pType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            double posOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            double posVolume    = PositionGetDouble(POSITION_VOLUME);
+
+            if(pType == POSITION_TYPE_BUY)
+            {
+               totalBuyLots += posVolume;
+               sumBuyPriceLots += (posOpenPrice * posVolume);
+               buyCount++;
+            }
+            else if(pType == POSITION_TYPE_SELL)
+            {
+               totalSellLots += posVolume;
+               sumSellPriceLots += (posOpenPrice * posVolume);
+               sellCount++;
+            }
+         }
+      }
+
+      double avgBuyEntryPrice  = (totalBuyLots > 0.0) ? (sumBuyPriceLots / totalBuyLots) : 0.0;
+      double avgSellEntryPrice = (totalSellLots > 0.0) ? (sumSellPriceLots / totalSellLots) : 0.0;
+
+      // --- STEP 2: CALCULATE ADAPTIVE FIBONACCI EXIT TARGETS ---
+      // BUY SIDE EXIT TARGETS
+      double targetBuyTP = area.hardTP50;
+      double targetBuySL = area.floorHardSL;
+
+      if(buyCount > 0)
+      {
+         if(buyCount >= 4)
+         {
+            // Tier 3: Emergency Evacuation (4-5 Pos) -> Exit at Average Entry + Spread + Buffer
+            targetBuyTP = NormalizeDouble(avgBuyEntryPrice + spreadBufferPoints + (15.0 * _Point), _Digits);
+            if(targetBuyTP <= (currentBid + minStopPoints))
+               targetBuyTP = NormalizeDouble(currentBid + minStopPoints + (5.0 * _Point), _Digits);
+         }
+         else if(buyCount == 3)
+         {
+            // Tier 2: Moderate Depth (3 Pos) -> Advance TP to Fibo 38.2% between AvgEntry and HardTP50
+            double span = MathMax(0.0, area.hardTP50 - avgBuyEntryPrice);
+            targetBuyTP = NormalizeDouble(avgBuyEntryPrice + (span * 0.382), _Digits);
+            if(targetBuyTP <= (currentBid + minStopPoints))
+               targetBuyTP = NormalizeDouble(currentBid + minStopPoints + (5.0 * _Point), _Digits);
+         }
+         else
+         {
+            // Tier 1: Shallow Depth (1-2 Pos) -> Target Hard TP 50%
+            targetBuyTP = area.hardTP50;
+         }
+
+         // Ratchet Break Even: If price is floating in profit >= 35 points above AvgEntry
+         if(currentBid >= (avgBuyEntryPrice + (35.0 * _Point)))
+         {
+            double beSL = NormalizeDouble(avgBuyEntryPrice + (10.0 * _Point), _Digits);
+            if(beSL > targetBuySL) targetBuySL = beSL;
+         }
+      }
+
+      // SELL SIDE EXIT TARGETS
+      double targetSellTP = area.hardTP50;
+      double targetSellSL = area.roofHardSL;
+
+      if(sellCount > 0)
+      {
+         if(sellCount >= 4)
+         {
+            // Tier 3: Emergency Evacuation (4-5 Pos) -> Exit at Average Entry - Spread - Buffer
+            targetSellTP = NormalizeDouble(avgSellEntryPrice - spreadBufferPoints - (15.0 * _Point), _Digits);
+            if(targetSellTP >= (currentAsk - minStopPoints))
+               targetSellTP = NormalizeDouble(currentAsk - minStopPoints - (5.0 * _Point), _Digits);
+         }
+         else if(sellCount == 3)
+         {
+            // Tier 2: Moderate Depth (3 Pos) -> Advance TP to Fibo 38.2% between AvgEntry and HardTP50
+            double span = MathMax(0.0, avgSellEntryPrice - area.hardTP50);
+            targetSellTP = NormalizeDouble(avgSellEntryPrice - (span * 0.382), _Digits);
+            if(targetSellTP >= (currentAsk - minStopPoints))
+               targetSellTP = NormalizeDouble(currentAsk - minStopPoints - (5.0 * _Point), _Digits);
+         }
+         else
+         {
+            // Tier 1: Shallow Depth (1-2 Pos) -> Target Hard TP 50%
+            targetSellTP = area.hardTP50;
+         }
+
+         // Ratchet Break Even: If price is floating in profit >= 35 points below AvgEntry
+         if(currentAsk <= (avgSellEntryPrice - (35.0 * _Point)))
+         {
+            double beSL = NormalizeDouble(avgSellEntryPrice - (10.0 * _Point), _Digits);
+            if(beSL < targetSellSL || targetSellSL <= 0.0) targetSellSL = beSL;
+         }
+      }
+
+      // --- STEP 3: EVALUATE CANDLE CLOSE BREACH & APPLY DYNAMIC SL / TP ---
+      for(int k = PositionsTotal() - 1; k >= 0; k--)
+      {
+         ulong ticket = PositionGetTicket(k);
+         if(ticket <= 0) continue;
+
+         if(PositionGetString(POSITION_SYMBOL) == m_symbol &&
+            PositionGetInteger(POSITION_MAGIC) == (long)m_magicNumber)
+         {
+            ENUM_POSITION_TYPE pType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            string comment = PositionGetString(POSITION_COMMENT);
+            ENUM_TIMEFRAMES originTF = ParseTFFromComment(comment, PERIOD_M1);
+
+            double curSL = PositionGetDouble(POSITION_SL);
+            double curTP = PositionGetDouble(POSITION_TP);
+
+            if(pType == POSITION_TYPE_BUY)
+            {
+               // 1. Check Candle Close Breach below Floor Boundary
+               double bar1Close = iClose(m_symbol, originTF, 1);
+               double bar1Low   = iLow(m_symbol, originTF, 1);
+               bool isBreached  = (area.hasOrganicFloor && bar1Close > 0.0 && bar1Close < area.floorBoundary);
+
+               if(isBreached)
+               {
+                  // Close Bar 1 confirmed below Floor: Move SL to Candle Low or Force Close
+                  double breachSL = NormalizeDouble(bar1Low - spreadBufferPoints, _Digits);
+                  double distToSL = (currentBid - breachSL);
+
+                  if(distToSL >= minStopPoints)
+                  {
+                     if(MathAbs(curSL - breachSL) > (2.0 * _Point))
+                     {
+                        m_trade.PositionModify(ticket, breachSL, curTP);
+                     }
+                  }
+                  else
+                  {
+                     // Price too close to extreme or already plunged past Low -> Instant Market Close
+                     m_trade.PositionClose(ticket);
+                     continue;
+                  }
+               }
+               else
+               {
+                  // Normal Management: Apply Adaptive Depth TP & Ratchet SL
+                  double finalSL = curSL;
+                  if(targetBuySL > curSL && targetBuySL < (currentBid - minStopPoints))
+                     finalSL = targetBuySL;
+
+                  double finalTP = curTP;
+                  if(targetBuyTP > (currentBid + minStopPoints) && MathAbs(curTP - targetBuyTP) > (5.0 * _Point))
+                     finalTP = targetBuyTP;
+
+                  if(finalSL != curSL || finalTP != curTP)
+                  {
+                     m_trade.PositionModify(ticket, finalSL, finalTP);
+                  }
+               }
+            }
+            else if(pType == POSITION_TYPE_SELL)
+            {
+               // 1. Check Candle Close Breach above Roof Boundary
+               double bar1Close = iClose(m_symbol, originTF, 1);
+               double bar1High  = iHigh(m_symbol, originTF, 1);
+               bool isBreached  = (area.hasOrganicRoof && bar1Close > 0.0 && bar1Close > area.roofBoundary);
+
+               if(isBreached)
+               {
+                  // Close Bar 1 confirmed above Roof: Move SL to Candle High or Force Close
+                  double breachSL = NormalizeDouble(bar1High + spreadBufferPoints, _Digits);
+                  double distToSL = (breachSL - currentAsk);
+
+                  if(distToSL >= minStopPoints)
+                  {
+                     if(MathAbs(curSL - breachSL) > (2.0 * _Point))
+                     {
+                        m_trade.PositionModify(ticket, breachSL, curTP);
+                     }
+                  }
+                  else
+                  {
+                     // Price too close to extreme or already surged past High -> Instant Market Close
+                     m_trade.PositionClose(ticket);
+                     continue;
+                  }
+               }
+               else
+               {
+                  // Normal Management: Apply Adaptive Depth TP & Ratchet SL
+                  double finalSL = curSL;
+                  if(targetSellSL > 0.0 && (curSL <= 0.0 || targetSellSL < curSL) && targetSellSL > (currentAsk + minStopPoints))
+                     finalSL = targetSellSL;
+
+                  double finalTP = curTP;
+                  if(targetSellTP > 0.0 && targetSellTP < (currentAsk - minStopPoints) && MathAbs(curTP - targetSellTP) > (5.0 * _Point))
+                     finalTP = targetSellTP;
+
+                  if(finalSL != curSL || finalTP != curTP)
+                  {
+                     m_trade.PositionModify(ticket, finalSL, finalTP);
+                  }
+               }
             }
          }
       }

@@ -571,6 +571,35 @@ public:
    }
 
    //+------------------------------------------------------------------+
+   //| Parse Timeframe from String Representation                       |
+   //+------------------------------------------------------------------+
+   static ENUM_TIMEFRAMES ParseTFShortName(const string tfStr)
+   {
+      if(tfStr == "M1")  return PERIOD_M1;
+      if(tfStr == "M2")  return PERIOD_M2;
+      if(tfStr == "M3")  return PERIOD_M3;
+      if(tfStr == "M4")  return PERIOD_M4;
+      if(tfStr == "M5")  return PERIOD_M5;
+      if(tfStr == "M6")  return PERIOD_M6;
+      if(tfStr == "M10") return PERIOD_M10;
+      if(tfStr == "M12") return PERIOD_M12;
+      if(tfStr == "M15") return PERIOD_M15;
+      if(tfStr == "M20") return PERIOD_M20;
+      if(tfStr == "M30") return PERIOD_M30;
+      if(tfStr == "H1")  return PERIOD_H1;
+      if(tfStr == "H2")  return PERIOD_H2;
+      if(tfStr == "H3")  return PERIOD_H3;
+      if(tfStr == "H4")  return PERIOD_H4;
+      if(tfStr == "H6")  return PERIOD_H6;
+      if(tfStr == "H8")  return PERIOD_H8;
+      if(tfStr == "H12") return PERIOD_H12;
+      if(tfStr == "D1")  return PERIOD_D1;
+      if(tfStr == "W1")  return PERIOD_W1;
+      if(tfStr == "MN")  return PERIOD_MN1;
+      return PERIOD_CURRENT;
+   }
+
+   //+------------------------------------------------------------------+
    //| Get count of active/valid (unmitigated) areas                    |
    //+------------------------------------------------------------------+
    int GetValidAreasCount(const ENUM_TIMEFRAMES tf)

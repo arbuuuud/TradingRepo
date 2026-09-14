@@ -53,6 +53,10 @@ input bool              InpEnableTradeLogger = true;              // Enable Stra
 input bool              InpShowHUD           = false;             // Show HUD Comment on Chart (false = Maximum Speed)
 input bool              InpVerboseLog        = false;             // Print Verbose Transaction Logs (false = Silent TSV Write)
 
+input group "=== Phase 6 Proactive Loss Prevention & Evacuation ==="
+input bool              InpEnableProactiveEvacuation = true;      // Enable Proactive Depth Evacuation & Cut-Loss
+input bool              InpCandleCloseBreachClose    = true;      // Exit / Tighten SL on Origin TF Candle Close Breach
+
 input group "=== Dynamic Memory & Garbage Collection ==="
 input bool              InpEnableGC          = true;              // Enable Dynamic Garbage Collection
 input int               InpMaxMemoryBars     = 1500;              // Max Zone Age in M1 Bars before Purge
@@ -198,6 +202,12 @@ void OnTick()
    if(InpEnablePhase4)
    {
       ExtTradingArea.UpdateTradingArea(_Symbol, ExtRBRDBD, bid, ask, false);
+
+      // 4. Proactive Open Positions Risk Management & Evacuation (Phase 6)
+      if(InpEnableProactiveEvacuation)
+      {
+         ExtLimitPlacer.ManageOpenPositionsRisk(ExtTradingArea.GetActiveArea(), bid, ask);
+      }
    }
 
    // 5. Update Chart HUD Info (Only if enabled to maximize backtest performance)

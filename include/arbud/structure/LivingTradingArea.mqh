@@ -319,10 +319,11 @@ public:
          return false;
       }
 
-      // 2. Strength Validation (Must be >= 1)
-      if(m_activeArea.floorStrength < 1)
+      // 2. Strength Validation (Must be >= minReqStr)
+      int minReqStr = m_allowStrength0 ? 0 : 1;
+      if(m_activeArea.floorStrength < minReqStr)
       {
-         rejectReason = StringFormat("Floor Strength is %d (Weak Str0)", m_activeArea.floorStrength);
+         rejectReason = StringFormat("Floor Strength is %d (Below min required %d)", m_activeArea.floorStrength, minReqStr);
          return false;
       }
 
@@ -380,10 +381,11 @@ public:
          return false;
       }
 
-      // 2. Strength Validation (Must be >= 1)
-      if(m_activeArea.roofStrength < 1)
+      // 2. Strength Validation (Must be >= minReqStr)
+      int minReqStr = m_allowStrength0 ? 0 : 1;
+      if(m_activeArea.roofStrength < minReqStr)
       {
-         rejectReason = StringFormat("Roof Strength is %d (Weak Str0)", m_activeArea.roofStrength);
+         rejectReason = StringFormat("Roof Strength is %d (Below min required %d)", m_activeArea.roofStrength, minReqStr);
          return false;
       }
 
