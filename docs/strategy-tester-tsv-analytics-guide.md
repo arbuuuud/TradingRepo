@@ -32,8 +32,8 @@ Untuk menentukan kualitas pembentukan zona Supply & Demand (RBR / DBD) yang pali
 | **Step 2** | **Switch Input & Penurunan Filter Strength 0** | 🟢 Selesai | `experts/rbrdbdV1Sample.mq5`, `rbrdbdV1.mqh`, `LivingTradingArea.mqh`, `ProactiveLimitPlacer.mqh` |
 | **Step 3** | **Modul Logger TSV MQL5 (`TradeDataLogger.mqh`)** | 🟢 Selesai | `include/arbud/trade/TradeDataLogger.mqh` |
 | **Step 4** | **Subagent & Skill Analytics Permanen** | 🟢 Selesai | `.pi/agents/ea-data-scientist.md`, `.pi/skills/mql5-tester-analytics/SKILL.md` |
-| **Step 5** | **Skrip CLI Node.js/Bun Think-in-Code Analyzer** | 🟡 Siap Desain | `scripts/analyze-tester-results.js` |
-| **Step 6** | **Uji Coba Strategy Tester & Review Data Pertama** | ⚪ Pending | Laporan Analisis Probabilitas DNA |
+| **Step 5** | **Skrip CLI Node.js/Bun Think-in-Code Analyzer** | 🟢 Selesai | `scripts/analyze-tester-results.js` |
+| **Step 6** | **Uji Coba Strategy Tester & Review Data Pertama** | 🟡 Siap Uji Coba | Laporan Analisis Probabilitas DNA |
 
 ---
 
