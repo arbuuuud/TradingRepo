@@ -29,6 +29,7 @@ struct STradeLogRecord
    int                  pillarH;       // 1 or 0
    int                  strength;      // 0, 1, 2
    int                  exhLevel;      // 0 to 5
+   string               session;       // SY, AS, LN, OL, NY, EOD
    datetime             openTime;
    datetime             closeTime;
    double               openPrice;
@@ -120,7 +121,7 @@ public:
 
       FileSeek(m_fileHandle, 0, SEEK_SET);
       string header = "DealTicket\tPosID\tSymbol\tTradeType\tZoneType\tZoneTF\tDNA\t" +
-                      "Pillar_T\tPillar_B\tPillar_F\tPillar_H\tStrength\tExhLevel\t" +
+                      "Pillar_T\tPillar_B\tPillar_F\tPillar_H\tStrength\tExhLevel\tSession\t" +
                       "OpenTime\tCloseTime\tOpenPrice\tClosePrice\tProfitUSD\tProfitPoints\tExitReason\tComment";
       FileWriteString(m_fileHandle, header + "\n");
       FileFlush(m_fileHandle);
@@ -231,6 +232,7 @@ public:
       rec.pillarH  = 0;
       rec.strength = 0;
       rec.exhLevel = 0;
+      rec.session  = "UNKNOWN";
 
       if(StringLen(comment) == 0) return;
 
@@ -258,6 +260,25 @@ public:
          // Parse Exhaustion Level: "L0" to "L5"
          if(StringLen(parts[4]) >= 2 && StringSubstr(parts[4], 0, 1) == "L")
             rec.exhLevel = (int)StringToInteger(StringSubstr(parts[4], 1));
+
+         // Parse Market Session: "SY", "AS", "LN", "OL", "NY", "EOD"
+         if(count >= 6 && StringLen(parts[5]) > 0)
+         {
+            rec.session = parts[5];
+         }
+         else
+         {
+            // Derive session from openTime if comment lacks session tag
+            MqlDateTime dt;
+            TimeToStruct(rec.openTime, dt);
+            int h = dt.hour;
+            if(h >= 0  && h < 2)   rec.session = "SY";
+            else if(h >= 2  && h < 9)   rec.session = "AS";
+            else if(h >= 9  && h < 15)  rec.session = "LN";
+            else if(h >= 15 && h < 18)  rec.session = "OL";
+            else if(h >= 18 && h < 23)  rec.session = "NY";
+            else rec.session = "EOD";
+         }
       }
       else
       {
@@ -265,6 +286,16 @@ public:
          int sPos = StringFind(comment, ":S");
          if(sPos >= 0 && (sPos + 2) < StringLen(comment))
             rec.strength = (int)StringToInteger(StringSubstr(comment, sPos + 2, 1));
+
+         MqlDateTime dt;
+         TimeToStruct(rec.openTime, dt);
+         int h = dt.hour;
+         if(h >= 0  && h < 2)   rec.session = "SY";
+         else if(h >= 2  && h < 9)   rec.session = "AS";
+         else if(h >= 9  && h < 15)  rec.session = "LN";
+         else if(h >= 15 && h < 18)  rec.session = "OL";
+         else if(h >= 18 && h < 23)  rec.session = "NY";
+         else rec.session = "EOD";
       }
    }
 
@@ -363,7 +394,7 @@ public:
       if(m_fileHandle == INVALID_HANDLE) return;
 
       FileSeek(m_fileHandle, 0, SEEK_END);
-      string row = StringFormat("%I64u\t%I64u\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%.2f\t%.2f\t%.2f\t%.1f\t%s\t%s",
+      string row = StringFormat("%I64u\t%I64u\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%.2f\t%.2f\t%.2f\t%.1f\t%s\t%s",
                                 rec.dealTicket,
                                 rec.posId,
                                 rec.symbol,
@@ -377,6 +408,7 @@ public:
                                 rec.pillarH,
                                 rec.strength,
                                 rec.exhLevel,
+                                rec.session,
                                 TimeToString(rec.openTime, TIME_DATE | TIME_SECONDS),
                                 TimeToString(rec.closeTime, TIME_DATE | TIME_SECONDS),
                                 rec.openPrice,

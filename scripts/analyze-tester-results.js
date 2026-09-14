@@ -82,6 +82,18 @@ function parseTSV(filePath) {
     const profitPts = parseFloat(cols[headerMap['ProfitPoints']]) || 0.0;
     const strength = parseInt(cols[headerMap['Strength']], 10) || 0;
     const exhLevel = parseInt(cols[headerMap['ExhLevel']], 10) || 0;
+    const openTime = cols[headerMap['OpenTime']] || '';
+
+    let session = headerMap['Session'] !== undefined ? cols[headerMap['Session']] : '';
+    if (!session || session === 'UNKNOWN') {
+      const h = parseInt(openTime.substr(11, 2), 10);
+      if (h >= 0 && h < 2) session = 'SY';
+      else if (h >= 2 && h < 9) session = 'AS';
+      else if (h >= 9 && h < 15) session = 'LN';
+      else if (h >= 15 && h < 18) session = 'OL';
+      else if (h >= 18 && h < 23) session = 'NY';
+      else session = 'EOD';
+    }
 
     records.push({
       dealTicket: cols[headerMap['DealTicket']],
@@ -97,7 +109,8 @@ function parseTSV(filePath) {
       pillarH: parseInt(cols[headerMap['Pillar_H']], 10) || 0,
       strength: strength,
       exhLevel: exhLevel,
-      openTime: cols[headerMap['OpenTime']] || '',
+      session: session,
+      openTime: openTime,
       closeTime: cols[headerMap['CloseTime']] || '',
       openPrice: parseFloat(cols[headerMap['OpenPrice']]) || 0.0,
       closePrice: parseFloat(cols[headerMap['ClosePrice']]) || 0.0,
@@ -324,6 +337,28 @@ function main() {
     if (group.length === 0) return;
     const m = computeMetrics(group);
     const label = (exhLabels[lvl] || `L${lvl}`).padEnd(20);
+    console.log(`| ${label} | ${String(m.total).padStart(6)} | ${String(m.winRate + '%').padStart(8)} | ${String('$' + m.netProfit).padStart(10)} | ${String(m.profitFactor).padStart(13)} | ${String(m.avgPoints).padStart(10)} | ${String('$' + m.expectancy).padStart(10)} |`);
+  });
+
+  // 6. Market Session Performance Breakdown
+  printSection('6. MARKET SESSION BREAKDOWN (Sydney, Asia, London, Overlap, New York)');
+  console.log('| Session Code & Name       | Trades | Win Rate | Net Profit | Profit Factor | Avg Points | Expectancy |');
+  console.log('|---------------------------|-------:|---------:|-----------:|--------------:|-----------:|-----------:|');
+
+  const sessionMeta = [
+    { code: 'SY',  name: 'SY (Sydney 00-02)' },
+    { code: 'AS',  name: 'AS (Tokyo/Asia 02-09)' },
+    { code: 'LN',  name: 'LN (London 09-15)' },
+    { code: 'OL',  name: 'OL (London/NY Overlap 15-18)' },
+    { code: 'NY',  name: 'NY (New York 18-23)' },
+    { code: 'EOD', name: 'EOD (Rollover 23-24)' }
+  ];
+
+  sessionMeta.forEach(s => {
+    const group = records.filter(r => r.session === s.code);
+    if (group.length === 0) return;
+    const m = computeMetrics(group);
+    const label = s.name.padEnd(25);
     console.log(`| ${label} | ${String(m.total).padStart(6)} | ${String(m.winRate + '%').padStart(8)} | ${String('$' + m.netProfit).padStart(10)} | ${String(m.profitFactor).padStart(13)} | ${String(m.avgPoints).padStart(10)} | ${String('$' + m.expectancy).padStart(10)} |`);
   });
 

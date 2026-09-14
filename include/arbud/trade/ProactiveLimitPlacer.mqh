@@ -95,8 +95,27 @@ public:
    }
 
    //+------------------------------------------------------------------+
-   //| Generate Compact DNA Order Comment                               |
-   //| Format: [RBR/DBD]:[TF]:[DNA]:[Str]:[Lvl] (Max 31 chars)          |
+   //| Determine Market Session from Server Time                       |
+   //| SY: Sydney (00-02), AS: Asia (02-09), LN: London (09-15),       |
+   //| OL: Overlap London/NY (15-18), NY: New York (18-23), EOD: 23-24  |
+   //+------------------------------------------------------------------+
+   static string GetMarketSession(const datetime time)
+   {
+      MqlDateTime dt;
+      TimeToStruct(time, dt);
+      int h = dt.hour;
+
+      if(h >= 0  && h < 2)   return "SY"; // Sydney Session
+      if(h >= 2  && h < 9)   return "AS"; // Asian (Tokyo) Session
+      if(h >= 9  && h < 15)  return "LN"; // London Session
+      if(h >= 15 && h < 18)  return "OL"; // London - NY Overlap (High Volatility)
+      if(h >= 18 && h < 23)  return "NY"; // New York Afternoon
+      return "EOD";                       // End of Day Rollover
+   }
+
+   //+------------------------------------------------------------------+
+   //| Generate Compact DNA & Session Order Comment                     |
+   //| Format: [RBR/DBD]:[TF]:[DNA]:[Str]:[Lvl]:[Ses] (Max 31 chars)    |
    //+------------------------------------------------------------------+
    string GenerateOrderComment(const string typeStr,
                                const ENUM_TIMEFRAMES tf,
@@ -105,7 +124,8 @@ public:
                                const ENUM_EXHAUSTION_LEVEL level) const
    {
       string tfStr = CRBRDBDV1::GetTFShortName(tf);
-      string comment = StringFormat("%s:%s:%s:S%d:L%d", typeStr, tfStr, dna, strength, (int)level);
+      string sesStr = GetMarketSession(TimeCurrent());
+      string comment = StringFormat("%s:%s:%s:S%d:L%d:%s", typeStr, tfStr, dna, strength, (int)level, sesStr);
       return StringSubstr(comment, 0, 31); // Ensure <= 31 chars for broker compliance
    }
 
