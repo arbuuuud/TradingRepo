@@ -15,31 +15,47 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-// Default Wine Common Files directory on macOS
-const DEFAULT_SEARCH_DIR = path.join(
-  os.homedir(),
-  'mt5prefix/drive_c/users/alami/AppData/Roaming/MetaQuotes/Terminal/Common/Files'
-);
+// Default Wine Common Files directories on macOS (checks ~/.wine first then ~/mt5prefix)
+const CANDIDATE_DIRS = [
+  path.join(os.homedir(), '.wine/drive_c/users/alami/AppData/Roaming/MetaQuotes/Terminal/Common/Files'),
+  path.join(os.homedir(), 'mt5prefix/drive_c/users/alami/AppData/Roaming/MetaQuotes/Terminal/Common/Files')
+];
 
-function findLatestTSV(dir) {
-  if (!fs.existsSync(dir)) {
-    return null;
+function findLatestTSV() {
+  for (const dir of CANDIDATE_DIRS) {
+    if (!fs.existsSync(dir)) continue;
+
+    const files = fs.readdirSync(dir)
+      .filter(f => f.startsWith('rbr_dbd_analytics_') && f.endsWith('.tsv'))
+      .map(f => {
+        const fullPath = path.join(dir, f);
+        const stat = fs.statSync(fullPath);
+        return { file: f, path: fullPath, mtime: stat.mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+
+    if (files.length > 0) return files[0].path;
   }
-
-  const files = fs.readdirSync(dir)
-    .filter(f => f.startsWith('rbr_dbd_analytics_') && f.endsWith('.tsv'))
-    .map(f => {
-      const fullPath = path.join(dir, f);
-      const stat = fs.statSync(fullPath);
-      return { file: f, path: fullPath, mtime: stat.mtimeMs };
-    })
-    .sort((a, b) => b.mtime - a.mtime);
-
-  return files.length > 0 ? files[0].path : null;
+  return null;
 }
 
 function parseTSV(filePath) {
-  const content = fs.readFileSync(filePath, 'utf8');
+  const buf = fs.readFileSync(filePath);
+  let content = '';
+  // Detect UTF-16 LE BOM or presence of null bytes
+  if ((buf[0] === 0xff && buf[1] === 0xfe) || buf.includes(0x00)) {
+    content = buf.toString('utf16le');
+  } else if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
+    content = buf.slice(3).toString('utf8');
+  } else {
+    content = buf.toString('utf8');
+  }
+
+  // Remove potential BOM character at string start
+  if (content.charCodeAt(0) === 0xfeff) {
+    content = content.slice(1);
+  }
+
   const lines = content.split(/\r?\n/).filter(line => line.trim().length > 0);
 
   if (lines.length < 2) {
@@ -176,10 +192,10 @@ function main() {
   }
 
   if (!targetFile) {
-    console.log(`[Info] No file specified. Searching latest in: ${DEFAULT_SEARCH_DIR}`);
-    targetFile = findLatestTSV(DEFAULT_SEARCH_DIR);
+    console.log(`[Info] No file specified. Searching in Wine Common/Files...`);
+    targetFile = findLatestTSV();
     if (!targetFile) {
-      console.error(`[Error] No TSV export files found in: ${DEFAULT_SEARCH_DIR}`);
+      console.error(`[Error] No TSV export files found in candidate directories.`);
       console.log(`Usage: node scripts/analyze-tester-results.js <path/to/file.tsv>`);
       process.exit(1);
     }
