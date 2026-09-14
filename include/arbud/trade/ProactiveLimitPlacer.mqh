@@ -62,21 +62,26 @@ public:
 
    //+------------------------------------------------------------------+
    //| Check if Setup qualifies as Elite High-Probability Multiplier    |
+   //| Returns multiplier: 3.0x for Super Elite, 2.0x for Elite, 1.0x def|
    //+------------------------------------------------------------------+
-   bool IsEliteSetup(const string session, const string dna) const
+   double GetSetupLotMultiplier(const string session, const string dna) const
    {
-      // London: T-F- (WR 67.0%, PF 1.78), T-FH (PF 1.03)
-      if(session == "LN" && (dna == "T-F-" || dna == "T-FH")) return true;
-      // EOD: -B-H (WR 61.5%, PF 1.75), TB-- (PF 1.28)
-      if(session == "EOD" && (dna == "-B-H" || dna == "TB--")) return true;
-      // Overlap: T-F- (PF 1.22)
-      if(session == "OL" && dna == "T-F-") return true;
-      // Asia: --FH (PF 1.16), ---- (Clean Base WR 64.5%)
-      if(session == "AS" && (dna == "--FH" || dna == "----")) return true;
-      // Sydney: ---H (WR 65.3%), -B-H (WR 62.4%)
-      if(session == "SY" && (dna == "---H" || dna == "-B-H")) return true;
+      // 1. SUPER ELITE (3.0x Lot Multiplier) -> Profit Factor > 1.6 & Proven High WR
+      // - London T-F- (WR 67.5%, PF 1.66)
+      // - EOD -B-H (WR 61.5%, PF 2.97, Net +$375.60)
+      // - Sydney T-FH (WR 78.4%, PF 11.16)
+      if(session == "LN"  && dna == "T-F-") return 3.0;
+      if(session == "EOD" && dna == "-B-H") return 3.0;
+      if(session == "SY"  && dna == "T-FH") return 3.0;
 
-      return false;
+      // 2. ELITE (m_eliteLotMultiplier, default 2.0x) -> High WR / Net Positive
+      if(session == "LN"  && dna == "T-FH") return m_eliteLotMultiplier;
+      if(session == "EOD" && dna == "TB--") return m_eliteLotMultiplier;
+      if(session == "OL"  && dna == "T-F-") return m_eliteLotMultiplier;
+      if(session == "AS"  && (dna == "--FH" || dna == "----")) return m_eliteLotMultiplier;
+      if(session == "SY"  && (dna == "---H" || dna == "--F-")) return m_eliteLotMultiplier;
+
+      return 1.0;
    }
 
    //+------------------------------------------------------------------+
@@ -130,11 +135,11 @@ public:
    {
       if(!m_enableSessionFilter) return true;
 
-      // 1. Sydney Session (00-02): High WR on HTF/Clean Base, toxic on T--H
+      // 1. Sydney Session (00-02): High WR on HTF/Clean Base, toxic on T--H, TBF-, -B-H
       if(session == "SY")
       {
-         if(dna == "T--H" || dna == "TBF-") return false;
-         return true; // Allow ---H, -B-H, T---, ----, etc.
+         if(dna == "T--H" || dna == "TBF-" || dna == "-B-H" || dna == "TB--") return false;
+         return true; // Allow ---H, T-FH, T---, ----, --F-
       }
 
       // 2. Tokyo / Asian Session (02-09): Ban heavy loss generators T--H, TBFH, T---, TB-H, TBF-, T-F-, TB--
@@ -145,10 +150,10 @@ public:
          return true; // Allow --FH, ----, ---H, -B-H, -BFH, --F-
       }
 
-      // 3. London Session (09-15): FVG champion! Toxic on --FH, TB--
+      // 3. London Session (09-15): FVG champion! Toxic on --FH, TB--, -B-- (non-FVG)
       if(session == "LN")
       {
-         if(dna == "--FH" || dna == "TB--") return false;
+         if(dna == "--FH" || dna == "TB--" || dna == "-B--") return false;
          return true; // Allow T-F-, T-FH, -BF-, -BFH, ---H, -B-H, TBFH
       }
 
@@ -157,23 +162,24 @@ public:
       {
          // Pillar F (index 2) must be active ('F'), reject non-FVG setups
          if(StringLen(dna) < 3 || StringSubstr(dna, 2, 1) != "F") return false;
-         if(dna == "-BF-") return false; // Specific toxic setup in overlap
+         if(dna == "-BF-" || dna == "--F-") return false; // Specific toxic setups in overlap
          return true;
       }
 
-      // 5. New York Session (18-23): Ban heavy loss generators TB--, TB-H, -B--, ---H, T-F-, TBF-
+      // 5. New York Session (18-23): Ban heavy loss generators TB--, TB-H, -B--, ---H, T-F-, TBF-, TBFH
       if(session == "NY")
       {
          if(dna == "TB--" || dna == "TB-H" || dna == "-B--" || dna == "---H" ||
-            dna == "T-F-" || dna == "TBF-") return false;
+            dna == "T-F-" || dna == "TBF-" || dna == "TBFH") return false;
          return true; // Allow T-FH, --FH, -B-H, -BFH, ----, etc.
       }
 
-      // 6. Rollover / EOD (23-24): Toxic on -B-- and T---
+      // 6. Rollover / EOD (23-24): Toxic on -B--, T---, --FH, -BFH, TBFH, T-FH, TB-H
       if(session == "EOD")
       {
-         if(dna == "-B--" || dna == "T---") return false;
-         return true; // Allow -B-H, TB--, ----, etc.
+         if(dna == "-B--" || dna == "T---" || dna == "--FH" || dna == "-BFH" ||
+            dna == "TBFH" || dna == "T-FH" || dna == "TB-H") return false;
+         return true; // Allow -B-H, TB--, -BF-, ----, etc.
       }
 
       return true;
@@ -909,12 +915,9 @@ public:
       double tolerance = MathMax((freshSpan / (double)(targetCapacity + 1)) * 0.40, 5.0 * _Point);
       string comment   = GenerateOrderComment("RBR", area.floorPeriod, area.floorDNA, area.floorStrength, area.buyExhaustionLevel);
 
-      // Check if this setup qualifies for Elite Lot Multiplier (e.g. 2.0x lot)
-      double lotSize = m_fixedLotSize;
-      if(IsEliteSetup(curSession, area.floorDNA))
-      {
-         lotSize = NormalizeDouble(m_fixedLotSize * m_eliteLotMultiplier, 2);
-      }
+      // Check if this setup qualifies for Multiplier (3.0x Super Elite or 2.0x Elite)
+      double mult = GetSetupLotMultiplier(curSession, area.floorDNA);
+      double lotSize = NormalizeDouble(m_fixedLotSize * mult, 2);
 
       for(int i = 0; i < targetCapacity; i++)
       {
@@ -1024,12 +1027,9 @@ public:
       double tolerance = MathMax((freshSpan / (double)(targetCapacity + 1)) * 0.40, 5.0 * _Point);
       string comment   = GenerateOrderComment("DBD", area.roofPeriod, area.roofDNA, area.roofStrength, area.sellExhaustionLevel);
 
-      // Check if this setup qualifies for Elite Lot Multiplier (e.g. 2.0x lot)
-      double lotSize = m_fixedLotSize;
-      if(IsEliteSetup(curSession, area.roofDNA))
-      {
-         lotSize = NormalizeDouble(m_fixedLotSize * m_eliteLotMultiplier, 2);
-      }
+      // Check if this setup qualifies for Multiplier (3.0x Super Elite or 2.0x Elite)
+      double mult = GetSetupLotMultiplier(curSession, area.roofDNA);
+      double lotSize = NormalizeDouble(m_fixedLotSize * mult, 2);
 
       for(int i = 0; i < targetCapacity; i++)
       {
