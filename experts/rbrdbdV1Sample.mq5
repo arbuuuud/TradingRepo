@@ -57,6 +57,8 @@ input group "=== Phase 6 Proactive Loss Prevention & Evacuation ==="
 input bool              InpEnableProactiveEvacuation = true;      // Enable Proactive Depth Evacuation & Cut-Loss
 input bool              InpCandleCloseBreachClose    = true;      // Exit / Tighten SL on Origin TF Candle Close Breach
 input bool              InpEnableSessionMatrixFilter = true;      // Enable Market Session x DNA Matrix Filter
+input double            InpEliteLotMultiplier        = 2.0;       // Multiplier Lot for Elite Setups (e.g. 2.0x -> 0.02)
+input double            InpMaxSpreadPoints           = 35.0;      // Max Spread Points to Pause Orders (Anti-News Spike)
 
 input group "=== Dynamic Memory & Garbage Collection ==="
 input bool              InpEnableGC          = true;              // Enable Dynamic Garbage Collection
@@ -117,6 +119,8 @@ int OnInit()
    ExtLimitPlacer.Init(_Symbol, InpMagicNumber, InpMaxPosPerSide, InpFixedLot, InpVerboseLog);
    ExtLimitPlacer.SetAllowStrength0(InpAllowStrength0);
    ExtLimitPlacer.SetEnableSessionFilter(InpEnableSessionMatrixFilter);
+   ExtLimitPlacer.SetEliteLotMultiplier(InpEliteLotMultiplier);
+   ExtLimitPlacer.SetMaxSpreadPoints(InpMaxSpreadPoints);
 
    // 5. Configure Strategy Tester Data Logger
    if(InpEnableTradeLogger)

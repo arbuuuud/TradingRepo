@@ -27,6 +27,8 @@ private:
    ulong                m_orderDeviation;
    bool                 m_allowStrength0;            // Allow limit orders on Strength 0 zones
    bool                 m_enableSessionFilter;       // Filter setups based on market session matrix
+   double               m_eliteLotMultiplier;        // Lot multiplier for best probability setups (e.g. 2.0x)
+   double               m_maxSpreadPoints;           // Max allowed spread in points before pausing new orders
    bool                 m_verbose;                   // Print modification logs
    datetime             m_lastSyncTime;              // Debounce timer: prevents multiple requests per second
    datetime             m_lastTrackedFloorBaseStart; // Tracks active Floor zone origin time
@@ -40,6 +42,8 @@ public:
                              m_orderDeviation(10),
                              m_allowStrength0(false),
                              m_enableSessionFilter(true),
+                             m_eliteLotMultiplier(2.0),
+                             m_maxSpreadPoints(35.0),
                              m_verbose(true),
                              m_lastSyncTime(0),
                              m_lastTrackedFloorBaseStart(0),
@@ -53,6 +57,27 @@ public:
 
    void SetAllowStrength0(const bool allow) { m_allowStrength0 = allow; }
    void SetEnableSessionFilter(const bool enable) { m_enableSessionFilter = enable; }
+   void SetEliteLotMultiplier(const double mult) { m_eliteLotMultiplier = MathMax(1.0, mult); }
+   void SetMaxSpreadPoints(const double maxSpread) { m_maxSpreadPoints = maxSpread; }
+
+   //+------------------------------------------------------------------+
+   //| Check if Setup qualifies as Elite High-Probability Multiplier    |
+   //+------------------------------------------------------------------+
+   bool IsEliteSetup(const string session, const string dna) const
+   {
+      // London: T-F- (WR 67.0%, PF 1.78), T-FH (PF 1.03)
+      if(session == "LN" && (dna == "T-F-" || dna == "T-FH")) return true;
+      // EOD: -B-H (WR 61.5%, PF 1.75), TB-- (PF 1.28)
+      if(session == "EOD" && (dna == "-B-H" || dna == "TB--")) return true;
+      // Overlap: T-F- (PF 1.22)
+      if(session == "OL" && dna == "T-F-") return true;
+      // Asia: --FH (PF 1.16), ---- (Clean Base WR 64.5%)
+      if(session == "AS" && (dna == "--FH" || dna == "----")) return true;
+      // Sydney: ---H (WR 65.3%), -B-H (WR 62.4%)
+      if(session == "SY" && (dna == "---H" || dna == "-B-H")) return true;
+
+      return false;
+   }
 
    //+------------------------------------------------------------------+
    //| Initialization                                                   |
@@ -112,11 +137,12 @@ public:
          return true; // Allow ---H, -B-H, T---, ----, etc.
       }
 
-      // 2. Tokyo / Asian Session (02-09): Toxic on TBF-, T-F-, TB--
+      // 2. Tokyo / Asian Session (02-09): Ban heavy loss generators T--H, TBFH, T---, TB-H, TBF-, T-F-, TB--
       if(session == "AS")
       {
-         if(dna == "TBF-" || dna == "T-F-" || dna == "TB--") return false;
-         return true; // Allow --FH, ----, ---H, -B-H, etc.
+         if(dna == "T--H" || dna == "TB-H" || dna == "T---" || dna == "TBFH" ||
+            dna == "TBF-" || dna == "T-F-" || dna == "TB--") return false;
+         return true; // Allow --FH, ----, ---H, -B-H, -BFH, --F-
       }
 
       // 3. London Session (09-15): FVG champion! Toxic on --FH, TB--
@@ -135,11 +161,12 @@ public:
          return true;
       }
 
-      // 5. New York Session (18-23): Toxic on T-F- and TBF-
+      // 5. New York Session (18-23): Ban heavy loss generators TB--, TB-H, -B--, ---H, T-F-, TBF-
       if(session == "NY")
       {
-         if(dna == "T-F-" || dna == "TBF-") return false;
-         return true; // Allow T-FH, ----, -B-H, etc.
+         if(dna == "TB--" || dna == "TB-H" || dna == "-B--" || dna == "---H" ||
+            dna == "T-F-" || dna == "TBF-") return false;
+         return true; // Allow T-FH, --FH, -B-H, -BFH, ----, etc.
       }
 
       // 6. Rollover / EOD (23-24): Toxic on -B-- and T---
@@ -210,6 +237,14 @@ public:
          m_lastTrackedRoofBaseStart  = area.roofBaseStart;
          // Synchronize / adjust SL & TP for all existing open positions and pending orders
          SyncAreaTransitionRisk(area, currentBid, currentAsk);
+      }
+
+      // Safety: Spread & Volatility Spike Guard
+      // If current spread exceeds max allowed spread (e.g. news release or rollover), pause new limit orders
+      double curSpreadPoints = (currentAsk - currentBid) / _Point;
+      if(curSpreadPoints > m_maxSpreadPoints)
+      {
+         return;
       }
 
       // 1. Purge any pending orders that are OUTSIDE the active TradingArea bounds
@@ -874,6 +909,13 @@ public:
       double tolerance = MathMax((freshSpan / (double)(targetCapacity + 1)) * 0.40, 5.0 * _Point);
       string comment   = GenerateOrderComment("RBR", area.floorPeriod, area.floorDNA, area.floorStrength, area.buyExhaustionLevel);
 
+      // Check if this setup qualifies for Elite Lot Multiplier (e.g. 2.0x lot)
+      double lotSize = m_fixedLotSize;
+      if(IsEliteSetup(curSession, area.floorDNA))
+      {
+         lotSize = NormalizeDouble(m_fixedLotSize * m_eliteLotMultiplier, 2);
+      }
+
       for(int i = 0; i < targetCapacity; i++)
       {
          double orderPrice = targetPrices[i];
@@ -887,7 +929,7 @@ public:
             continue;
 
          // Place Limit Order in this untouched slot
-         m_trade.BuyLimit(m_fixedLotSize, orderPrice, m_symbol, area.floorHardSL, area.hardTP50,
+         m_trade.BuyLimit(lotSize, orderPrice, m_symbol, area.floorHardSL, area.hardTP50,
                           ORDER_TIME_GTC, 0, comment);
       }
    }
@@ -982,6 +1024,13 @@ public:
       double tolerance = MathMax((freshSpan / (double)(targetCapacity + 1)) * 0.40, 5.0 * _Point);
       string comment   = GenerateOrderComment("DBD", area.roofPeriod, area.roofDNA, area.roofStrength, area.sellExhaustionLevel);
 
+      // Check if this setup qualifies for Elite Lot Multiplier (e.g. 2.0x lot)
+      double lotSize = m_fixedLotSize;
+      if(IsEliteSetup(curSession, area.roofDNA))
+      {
+         lotSize = NormalizeDouble(m_fixedLotSize * m_eliteLotMultiplier, 2);
+      }
+
       for(int i = 0; i < targetCapacity; i++)
       {
          double orderPrice = targetPrices[i];
@@ -995,7 +1044,7 @@ public:
             continue;
 
          // Place Limit Order in this untouched slot
-         m_trade.SellLimit(m_fixedLotSize, orderPrice, m_symbol, area.roofHardSL, area.hardTP50,
+         m_trade.SellLimit(lotSize, orderPrice, m_symbol, area.roofHardSL, area.hardTP50,
                            ORDER_TIME_GTC, 0, comment);
       }
    }
