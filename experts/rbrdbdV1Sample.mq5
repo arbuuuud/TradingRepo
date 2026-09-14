@@ -56,6 +56,7 @@ input bool              InpVerboseLog        = false;             // Print Verbo
 input group "=== Phase 6 Proactive Loss Prevention & Evacuation ==="
 input bool              InpEnableProactiveEvacuation = true;      // Enable Proactive Depth Evacuation & Cut-Loss
 input bool              InpCandleCloseBreachClose    = true;      // Exit / Tighten SL on Origin TF Candle Close Breach
+input bool              InpEnableSessionMatrixFilter = true;      // Enable Market Session x DNA Matrix Filter
 
 input group "=== Dynamic Memory & Garbage Collection ==="
 input bool              InpEnableGC          = true;              // Enable Dynamic Garbage Collection
@@ -115,6 +116,7 @@ int OnInit()
    // 4. Configure Proactive Limit Placer
    ExtLimitPlacer.Init(_Symbol, InpMagicNumber, InpMaxPosPerSide, InpFixedLot, InpVerboseLog);
    ExtLimitPlacer.SetAllowStrength0(InpAllowStrength0);
+   ExtLimitPlacer.SetEnableSessionFilter(InpEnableSessionMatrixFilter);
 
    // 5. Configure Strategy Tester Data Logger
    if(InpEnableTradeLogger)

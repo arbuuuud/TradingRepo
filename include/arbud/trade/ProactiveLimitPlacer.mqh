@@ -26,6 +26,7 @@ private:
    string               m_symbol;
    ulong                m_orderDeviation;
    bool                 m_allowStrength0;            // Allow limit orders on Strength 0 zones
+   bool                 m_enableSessionFilter;       // Filter setups based on market session matrix
    bool                 m_verbose;                   // Print modification logs
    datetime             m_lastSyncTime;              // Debounce timer: prevents multiple requests per second
    datetime             m_lastTrackedFloorBaseStart; // Tracks active Floor zone origin time
@@ -38,6 +39,7 @@ public:
                              m_symbol(""),
                              m_orderDeviation(10),
                              m_allowStrength0(false),
+                             m_enableSessionFilter(true),
                              m_verbose(true),
                              m_lastSyncTime(0),
                              m_lastTrackedFloorBaseStart(0),
@@ -50,6 +52,7 @@ public:
    }
 
    void SetAllowStrength0(const bool allow) { m_allowStrength0 = allow; }
+   void SetEnableSessionFilter(const bool enable) { m_enableSessionFilter = enable; }
 
    //+------------------------------------------------------------------+
    //| Initialization                                                   |
@@ -92,6 +95,61 @@ public:
          default:                      factor = 0.00; break;
       }
       return (int)MathFloor(m_maxPosPerSide * factor);
+   }
+
+   //+------------------------------------------------------------------+
+   //| Check if Setup is High Probability for Current Market Session    |
+   //| Based on empirical Strategy Tester matrix analysis               |
+   //+------------------------------------------------------------------+
+   bool IsSetupAllowedForSession(const string session, const string dna) const
+   {
+      if(!m_enableSessionFilter) return true;
+
+      // 1. Sydney Session (00-02): High WR on HTF/Clean Base, toxic on T--H
+      if(session == "SY")
+      {
+         if(dna == "T--H" || dna == "TBF-") return false;
+         return true; // Allow ---H, -B-H, T---, ----, etc.
+      }
+
+      // 2. Tokyo / Asian Session (02-09): Toxic on TBF-, T-F-, TB--
+      if(session == "AS")
+      {
+         if(dna == "TBF-" || dna == "T-F-" || dna == "TB--") return false;
+         return true; // Allow --FH, ----, ---H, -B-H, etc.
+      }
+
+      // 3. London Session (09-15): FVG champion! Toxic on --FH, TB--
+      if(session == "LN")
+      {
+         if(dna == "--FH" || dna == "TB--") return false;
+         return true; // Allow T-F-, T-FH, -BF-, -BFH, ---H, -B-H, TBFH
+      }
+
+      // 4. Overlap London/NY (15-18): Highly volatile! ONLY allow strong FVG setups
+      if(session == "OL")
+      {
+         // Pillar F (index 2) must be active ('F'), reject non-FVG setups
+         if(StringLen(dna) < 3 || StringSubstr(dna, 2, 1) != "F") return false;
+         if(dna == "-BF-") return false; // Specific toxic setup in overlap
+         return true;
+      }
+
+      // 5. New York Session (18-23): Toxic on T-F- and TBF-
+      if(session == "NY")
+      {
+         if(dna == "T-F-" || dna == "TBF-") return false;
+         return true; // Allow T-FH, ----, -B-H, etc.
+      }
+
+      // 6. Rollover / EOD (23-24): Toxic on -B-- and T---
+      if(session == "EOD")
+      {
+         if(dna == "-B--" || dna == "T---") return false;
+         return true; // Allow -B-H, TB--, ----, etc.
+      }
+
+      return true;
    }
 
    //+------------------------------------------------------------------+
@@ -735,8 +793,16 @@ public:
       // - Must have organic RBR
       // - Strength must be >= minReqStr (Str 0 allowed if m_allowStrength0)
       // - Exhaustion Level must be < Level 5
+      // - Must pass Smart Market Session Matrix Filter
       int minReqStr = m_allowStrength0 ? 0 : 1;
       if(!area.hasOrganicFloor || area.floorStrength < minReqStr || area.buyExhaustionLevel >= EXHAUSTION_L5_EXHAUSTED)
+      {
+         CancelPendingOrdersByType(ORDER_TYPE_BUY_LIMIT);
+         return;
+      }
+
+      string curSession = GetMarketSession(TimeCurrent());
+      if(!IsSetupAllowedForSession(curSession, area.floorDNA))
       {
          CancelPendingOrdersByType(ORDER_TYPE_BUY_LIMIT);
          return;
@@ -835,8 +901,16 @@ public:
       // - Must have organic DBD
       // - Strength must be >= minReqStr (Str 0 allowed if m_allowStrength0)
       // - Exhaustion Level must be < Level 5
+      // - Must pass Smart Market Session Matrix Filter
       int minReqStr = m_allowStrength0 ? 0 : 1;
       if(!area.hasOrganicRoof || area.roofStrength < minReqStr || area.sellExhaustionLevel >= EXHAUSTION_L5_EXHAUSTED)
+      {
+         CancelPendingOrdersByType(ORDER_TYPE_SELL_LIMIT);
+         return;
+      }
+
+      string curSession = GetMarketSession(TimeCurrent());
+      if(!IsSetupAllowedForSession(curSession, area.roofDNA))
       {
          CancelPendingOrdersByType(ORDER_TYPE_SELL_LIMIT);
          return;
