@@ -26,6 +26,7 @@ private:
    string               m_symbol;
    ulong                m_orderDeviation;
    bool                 m_allowStrength0;            // Allow limit orders on Strength 0 zones
+   bool                 m_verbose;                   // Print modification logs
    datetime             m_lastSyncTime;              // Debounce timer: prevents multiple requests per second
    datetime             m_lastTrackedFloorBaseStart; // Tracks active Floor zone origin time
    datetime             m_lastTrackedRoofBaseStart;  // Tracks active Roof zone origin time
@@ -37,6 +38,7 @@ public:
                              m_symbol(""),
                              m_orderDeviation(10),
                              m_allowStrength0(false),
+                             m_verbose(true),
                              m_lastSyncTime(0),
                              m_lastTrackedFloorBaseStart(0),
                              m_lastTrackedRoofBaseStart(0)
@@ -55,12 +57,14 @@ public:
    bool Init(const string symbol,
              const ulong magicNumber = 888222,
              const int maxPosPerSide = 5,
-             const double fixedLot = 0.01)
+             const double fixedLot = 0.01,
+             const bool verbose = true)
    {
       m_symbol        = symbol;
       m_magicNumber   = magicNumber;
       m_maxPosPerSide = MathMax(1, maxPosPerSide);
       m_fixedLotSize  = MathMax(0.01, fixedLot);
+      m_verbose       = verbose;
 
       m_trade.SetExpertMagicNumber(m_magicNumber);
       m_trade.SetDeviationInPoints(m_orderDeviation);
@@ -356,14 +360,20 @@ public:
             if(pType == POSITION_TYPE_BUY)
             {
                m_trade.PositionModify(ticket, buyBatchNewSL, buyBatchNewTP);
-               PrintFormat("[AreaTransition] Buy #%I64u synced to Unified Batch: AvgEntry=%.2f, TP=%.2f, SL=%.2f",
-                           ticket, avgBuyEntryPrice, buyBatchNewTP, buyBatchNewSL);
+               if(m_verbose)
+               {
+                  PrintFormat("[AreaTransition] Buy #%I64u synced to Unified Batch: AvgEntry=%.2f, TP=%.2f, SL=%.2f",
+                              ticket, avgBuyEntryPrice, buyBatchNewTP, buyBatchNewSL);
+               }
             }
             else if(pType == POSITION_TYPE_SELL)
             {
                m_trade.PositionModify(ticket, sellBatchNewSL, sellBatchNewTP);
-               PrintFormat("[AreaTransition] Sell #%I64u synced to Unified Batch: AvgEntry=%.2f, TP=%.2f, SL=%.2f",
-                           ticket, avgSellEntryPrice, sellBatchNewTP, sellBatchNewSL);
+               if(m_verbose)
+               {
+                  PrintFormat("[AreaTransition] Sell #%I64u synced to Unified Batch: AvgEntry=%.2f, TP=%.2f, SL=%.2f",
+                              ticket, avgSellEntryPrice, sellBatchNewTP, sellBatchNewSL);
+               }
             }
          }
       }

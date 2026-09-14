@@ -51,6 +51,7 @@ private:
    ulong                m_magicNumber;
    int                  m_totalTradesLogged;
    bool                 m_isActive;
+   bool                 m_verbose;
    CDealInfo            m_dealInfo;
    CHistoryOrderInfo    m_orderInfo;
 
@@ -60,7 +61,8 @@ public:
                         m_symbol(""),
                         m_magicNumber(0),
                         m_totalTradesLogged(0),
-                        m_isActive(false)
+                        m_isActive(false),
+                        m_verbose(true)
    {
    }
 
@@ -72,10 +74,11 @@ public:
    //+------------------------------------------------------------------+
    //| Initialize Logger & Create Unique TSV File in Common Folder      |
    //+------------------------------------------------------------------+
-   bool Init(const string symbol, const ulong magicNumber, const ENUM_TIMEFRAMES tf)
+   bool Init(const string symbol, const ulong magicNumber, const ENUM_TIMEFRAMES tf, const bool verbose = true)
    {
       m_symbol            = symbol;
       m_magicNumber       = magicNumber;
+      m_verbose           = verbose;
       m_totalTradesLogged = 0;
 
       // Generate unique file name per run using timestamp
@@ -203,8 +206,11 @@ public:
       AppendRecordToFile(rec);
 
       m_totalTradesLogged++;
-      PrintFormat("[TradeDataLogger] Logged Trade #%d: Ticket %I64u | Type: %s | DNA: %s (S%d) | Points: %.1f | Profit: $%.2f | Reason: %s",
-                  m_totalTradesLogged, rec.dealTicket, rec.tradeType, rec.dna, rec.strength, rec.profitPoints, rec.profitUSD, rec.exitReason);
+      if(m_verbose)
+      {
+         PrintFormat("[TradeDataLogger] Logged Trade #%d: Ticket %I64u | Type: %s | DNA: %s (S%d) | Points: %.1f | Profit: $%.2f | Reason: %s",
+                     m_totalTradesLogged, rec.dealTicket, rec.tradeType, rec.dna, rec.strength, rec.profitPoints, rec.profitUSD, rec.exitReason);
+      }
    }
 
    //+------------------------------------------------------------------+
