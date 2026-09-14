@@ -81,15 +81,17 @@ public:
       m_verbose           = verbose;
       m_totalTradesLogged = 0;
 
-      // Generate unique file name per run using timestamp
-      // Format: rbr_dbd_analytics_<SYMBOL>_<TF>_<YYYYMMDD_HHMMSS>.tsv
+      // Generate unique file name per run using timestamp and tick count
+      // Format: rbr_dbd_analytics_<SYMBOL>_<TF>_<YYYYMMDD_HHMMSS>_<TICK>.tsv
       MqlDateTime dt;
       TimeToStruct(TimeLocal(), dt);
-      m_fileName = StringFormat("rbr_dbd_analytics_%s_%s_%04d%02d%02d_%02d%02d%02d.tsv",
+      uint tickMs = GetTickCount();
+      m_fileName = StringFormat("rbr_dbd_analytics_%s_%s_%04d%02d%02d_%02d%02d%02d_%u.tsv",
                                 m_symbol,
                                 EnumToString(tf),
                                 dt.year, dt.mon, dt.day,
-                                dt.hour, dt.min, dt.sec);
+                                dt.hour, dt.min, dt.sec,
+                                tickMs);
 
       // Open in FILE_COMMON folder so external analysis tools (Node.js/Bun) can access directly
       m_fileHandle = FileOpen(m_fileName, FILE_CSV | FILE_WRITE | FILE_READ | FILE_COMMON, '\t');
