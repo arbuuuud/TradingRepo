@@ -38,8 +38,8 @@ input bool              InpEnablePhase3      = true;              // Enable Phas
 
 input group "=== Phase 4 Living TradingArea & Exhaustion ==="
 input bool              InpEnablePhase4      = true;              // Enable Phase 4 Living TradingArea Corridor
-input bool              InpDrawTradingArea   = false;             // Draw TradingArea (Buy/Sell Boxes, TP50, Hard SL)
-input bool              InpHideZoneRectangles= true;              // Hide RBR/DBD Rectangles (true = Pure Speed / No Visuals)
+input bool              InpDrawTradingArea   = true;              // Draw TradingArea (Buy/Sell Boxes, TP50, Hard SL)
+input bool              InpHideZoneRectangles= false;             // Hide RBR/DBD Rectangles (false = Show Visuals)
 
 input group "=== Phase 5 Proactive Limit Order Placer ==="
 input bool              InpEnablePhase5      = true;              // Enable Phase 5 Proactive Limit Grid
@@ -50,7 +50,7 @@ input ulong             InpMagicNumber       = 888222;            // EA Magic Nu
 input group "=== Phase 7 Tester & Data Analytics ==="
 input bool              InpAllowStrength0    = true;              // Allow Strength 0 in TradingArea & Limit Order (for Testing)
 input bool              InpEnableTradeLogger = true;              // Enable Strategy Tester TSV Data Logger
-input bool              InpShowHUD           = false;             // Show HUD Comment on Chart (false = Maximum Speed)
+input bool              InpShowHUD           = true;              // Show HUD Comment on Chart (true = Visual Mode Active)
 input bool              InpVerboseLog        = false;             // Print Verbose Transaction Logs (false = Silent TSV Write)
 
 input group "=== Phase 6 Proactive Loss Prevention & Evacuation ==="
